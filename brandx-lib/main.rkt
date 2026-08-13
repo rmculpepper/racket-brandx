@@ -35,6 +35,7 @@
          interface-out
          make-generic
          bundle
+         bundle?
          make-bundle
          bundles->properties
          method-properties
@@ -1163,14 +1164,21 @@
   linkage)
 
 ;; dynamic-invoke-bundles : #:bind (Listof TaggedInterface) (Listof Bundle) -> VarHash
-(define (dynamic-invoke-bundles #:bind binds0 . bs0)
+(define (dynamic-invoke-bundles #:bind binds0
+                                #:flatten? [flatten? #t]
+                                . bs0)
   (define who 'dynamic-invoke-bundles)
   (define binds1 (convert-tagged-interfaces binds0))
-  (unless binds1 (raise-argument-error who "(listof bundle?)" binds0))
-  (define binds (tagged-interfaces-closure binds1))
+  (unless binds1 (raise-argument-error who "(listof tagged-interface/c)" binds0))
   (for ([b (in-list bs0)])
     (unless (bundle? b) (raise-argument-error who "bundle?" b)))
-  (define linkage (invoke-bundles* who binds bs0))
+  (define linkage (invoke-bundles* who binds1 bs0))
+  (if flatten?
+      (linkage->flat-vh who linkage binds1)
+      (linkage->nested-vh who linkage binds1)))
+
+(define (linkage->flat-vh who linkage binds1)
+  (define binds (tagged-interfaces-closure binds1))
   (for/fold ([h (hasheq)]) ([bind (in-list binds)])
     (define ifc (car bind))
     (define lkey (tagged-interface->linkage-key bind))
@@ -1180,3 +1188,23 @@
     (define vvalues (vh-extract bindvh ifc vnames neg-party #f "dynamic export"))
     (for/fold ([h h]) ([vname (in-list vnames)] [vvalue (in-list vvalues)])
       (hash-set h vname vvalue))))
+
+(define (linkage->nested-vh who linkage binds1)
+  (for/fold ([tih (hash)]) ([bind (in-list binds1)])
+    (define tag (cdr bind))
+    (define vh
+      (let loop ([ifc (car bind)] [vh (hasheq)])
+        (define lkey (tagged-interface->linkage-key (cons ifc tag)))
+        (define bindvh (unbox (hash-ref linkage lkey)))
+        (define vnames (rtif-vnames ifc))
+        (define neg-party 'dynamic-invoke-bundles)
+        (define vvalues (vh-extract bindvh ifc vnames neg-party #f "dynamic export"))
+        (define vh*
+          (for/fold ([vh vh])
+                    ([ifc (in-list (rtif-supers ifc))])
+            (loop ifc vh)))
+        (for/fold ([vh vh*])
+                  ([vname (in-list vnames)]
+                   [vvalue (in-list vvalues)])
+          (hash-set vh vname vvalue))))
+    (hash-set tih bind vh)))

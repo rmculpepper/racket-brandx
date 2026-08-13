@@ -6,7 +6,7 @@
 ;; pkg info
 
 (define version "0.1")
-(define collection "bland")
+(define collection "brandx")
 (define deps
   '(["base" #:version "8.18"]))
 (define pkg-authors '(ryanc))
@@ -14,4 +14,4 @@
 
 ;; collection info
 
-(define name "bland")
+(define name "brandx")
