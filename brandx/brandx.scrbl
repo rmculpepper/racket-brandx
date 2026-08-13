@@ -1,21 +1,22 @@
 #lang scribble/manual
 @(require scribble/example
-          (for-label racket/base racket/contract bland)
+          (for-label racket/base racket/contract brandx)
           (for-label (only-in racket/class
                               this abstract augment inner override)))
 @(begin
   (define the-eval (make-base-eval))
-  (the-eval '(require bland)))
+  (the-eval '(require brandx)))
 
 @; ----------------------------------------
-@title[#:tag "Bland"]{Bland: Another Generics Library}
+@title[#:tag "brandx"]{BrandX: Generics, Interfaces, and Components}
 
-@defmodule[bland]
+@defmodule[brandx]
 
-This library, @racketmodname[bland], is another library for @bold{generics} in
-Racket. It provides features similar to @racketmodname[racket/generic] and
-@racketmodname[racket/class], but it does not interoperate with either. It can
-also replace simple uses of @racketmodname[racket/unit].
+This library, @racketmodname[brandx], is another library for
+@bold{generics} in Racket. It provides features similar to
+@racketmodname[racket/generic] and @racketmodname[racket/class], but
+it does not interoperate with either. It can also replace simple uses
+of @racketmodname[racket/unit].
 
 @; ============================================================
 @section{Introduction}
