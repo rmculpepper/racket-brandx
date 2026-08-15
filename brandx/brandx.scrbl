@@ -79,8 +79,9 @@ of @racketmodname[racket/unit].
 ]
 
 @examples[#:eval the-eval #:label #f
-(contains? (circle 0 0 10) 8 9)
+(contains? (circle 0 0 10) 3 4)
 (area (rectangle 1 2 11 22))
+(eval:error (area 'line))
 (eval:error (area (rectangle 1 2 0 10)))
 ]
 
