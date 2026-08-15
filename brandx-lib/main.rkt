@@ -12,8 +12,6 @@
 ;; - add ordering constraints, eg import with #:prereq
 ;; - add inspector, add reflective operations
 ;;   - util to check no unimplemented methods (except given list)
-;; - make impl/c collapsible?
-;; - add option to disable internal (import/export) contracts?
 
 #lang racket/base
 (require (for-syntax racket/base
@@ -27,6 +25,7 @@
                      syntax/id-table
                      syntax/transformer)
          racket/contract
+         racket/contract/collapsible
          racket/list
          racket/match)
 (provide define-interface
@@ -75,20 +74,24 @@
 ;; contract for checking implementations of an interface member
 (define (impl/c vname ctc)
   (define ctc-get-proj (get/build-late-neg-projection ctc))
+  (define ctc-get-col-proj (get/build-collapsible-late-neg-projection ctc))
   (define important (format "~a (impl)" vname))
-  (define message (format "the ~s implementation for" vname))
+  (define message "the interface member's contract")
   (make-contract
-   #:name (list 'impl/c (list 'quote vname) (contract-name ctc))
+   #:name (contract-name ctc)
    #:first-order (contract-first-order ctc)
+   #:collapsible-late-neg-projection
+   (lambda (blame)
+     (define swapped-blame
+       ;; #:important resets blame to "produced"!
+       (blame-add-context blame message #:important important #:swap? #t))
+     (ctc-get-col-proj blame))
    #:late-neg-projection
    (lambda (blame)
      (define swapped-blame
        ;; #:important resets blame to "produced"!
-       (blame-add-context blame message
-                          #:important important #:swap? #t))
-     (define proj (ctc-get-proj swapped-blame))
-     (lambda (v neg-party)
-       (proj v neg-party)))
+       (blame-add-context blame message #:important important #:swap? #t))
+     (ctc-get-proj swapped-blame))
    #:list-contract? (list-contract? ctc)))
 
 (begin-for-syntax
