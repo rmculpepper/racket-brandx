@@ -8,6 +8,8 @@
 ;; - interface contracts cannot refer to interface members
 
 ;; TODO:
+;; - no-generics implies no predicate, no prop
+;; - drop #:dynamic-public, pubnames
 ;; - add ordering constraints, eg import with #:prereq
 ;; - add inspector, add reflective operations
 ;;   - util to check no unimplemented methods (except given list)
