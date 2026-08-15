@@ -159,24 +159,29 @@ of @racketmodname[racket/unit].
 
 
 @; ----------------------------------------
-@subsection[#:tag "comparison"]{Differences with Other Libraries}
+@subsection[#:tag "comparison"]{Comparison with Other Libraries}
 
-Differences from @racketmodname[racket/generic]: This library's generic
+Improvements over @racketmodname[racket/generic]: This library has better
+binding ergonomics: implementations may use export prefixes to avoid shadowing
+generic functions, and multiple interfaces may be implemented in a single
+shared definition scope. Contracts are associated with interface members, and
+interface imports and exports are contract boundaries, but there are no
+instance contracts. This library supports method overriding with calls to
+super-methods.
+
+Limitations compared to @racketmodname[racket/generic]: This library's generic
 functions always dispatch on their first positional argument, and they do not
-support ``defaults'' (instead, define a wrapper function). Implementations may
-make calls to super-methods. Implementations may use export prefixes to
-prevent shadowing generic functions. Contracts are associated with interface
-members, and interface imports and exports are contract boundaries, but there
-are no instance contracts.
+support ``defaults'' (instead, define a wrapper function).
 
-Differences from @racketmodname[racket/class]: All method names to be visible
-externally or visible to subclasses must be declared in an interface. There is
-no syntactic restriction or special treatment of methods; in particular, there
-is no implicit @racket[this] variable. Consequently, there is no syntactic
-support for treating fields as variables, and there is no special treatment of
-calls on the same object. There is no special construction/initialization
-support. There is no support for augmentable methods (@racket[augment],
-@racket[inner]). There is no support for declaring methods @racket[abstract].
+Differences from @racketmodname[racket/class]: Users retain direct access to
+structs, including pattern-matching via @racket[match]. All method names to be
+visible externally or visible to subclasses must be declared in an
+interface. There is no syntactic restriction or special treatment of methods;
+in particular, there is no implicit @racket[this] variable. Consequently,
+there is no syntactic support for treating fields as variables, and there is
+no special treatment of calls on the same object. There is no special
+construction/initialization support. There is no support for augmentable
+methods (@racket[augment], @racket[inner]).
 
 
 @; ----------------------------------------
