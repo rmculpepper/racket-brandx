@@ -484,12 +484,9 @@
      (syntax-parse stx
        [(_ iname:interface-ref)
         (define ifc (datum iname.value))
-        (define/with-syntax predicate (ctif-predicate ifc))
-        (define ginfo (ctif-ginfo ifc))
-        ;; FIXME: could store and just use mbc names here
-        (define/with-syntax (gname ...) (or ginfo null))
+        (define/with-syntax (gname ...) (or (ctif-ginfo ifc) null))
         (expand-export
-         #'(combine-out iname predicate gname ...)
+         #'(combine-out iname gname ...)
          modes)]))))
 
 ;; ============================================================
