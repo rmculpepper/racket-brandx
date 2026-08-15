@@ -107,6 +107,9 @@
          (lambda (value value-name neg-party src)
            value)]))
 
+;; Opaque wrapper for struct type property values.
+(struct prop-val-wrapper (v))
+
 ;; ============================================================
 ;; Interfaces
 
@@ -148,13 +151,8 @@
 ;;            -> RtInterface
 (define (create-rtif iname uid supers vnames pubnames ctcv derives fallbacks)
   (define len (length vnames))
-  (define (vprop-guard in-val st-info)
-    (define super-stype (list-ref st-info 6))
-    (define vh (in-val super-stype))
-    (apply vector-immutable
-           vh
-           (for/list ([vname (in-list vnames)])
-             (hash-ref vh vname))))
+  (define-values (vprop vprop? vprop-ref)
+    (make-interface-property iname vnames derives))
   (define ifc-party (list 'interface iname))
   (define in-ctcv
     (apply vector-immutable
@@ -164,8 +162,6 @@
     (apply vector-immutable
            (for/list ([ctc (in-vector ctcv)] [vname (in-list vnames)])
              (stage-contract ctc ifc-party))))
-  (define-values (vprop vprop? vprop-ref)
-    (make-struct-type-property iname vprop-guard derives))
   (define fallbacks*
     (for/fold ([vh (hasheq)]) ([vname (in-list vnames)])
       (hash-set vh vname (hash-ref fallbacks vname (lambda () (unimplemented iname vname))))))
@@ -174,6 +170,16 @@
            key iname))
   (rtif iname uid supers vnames pubnames ctcv in-ctcv out-ctcv
         fallbacks* vprop vprop? vprop-ref))
+
+(define (make-interface-property iname vnames derives)
+  (define (vprop-guard in-val st-info)
+    (match-define (prop-val-wrapper initializer) in-val)
+    (define super-stype (list-ref st-info 6))
+    (define vh (initializer super-stype))
+    (apply vector-immutable vh
+           (for/list ([vname (in-list vnames)])
+             (hash-ref vh vname))))
+  (make-struct-type-property iname vprop-guard derives))
 
 (define (rtif-apply-out-ctcs ifc vs bnames neg-party loc)
   (define out-ctcv (rtif-out-ctcv ifc))
@@ -1039,8 +1045,14 @@
 ;; ============================================================
 ;; Linking Bundles
 
-;; bundles->properties : Bundle1 ...
-;;                    -> (Listof (cons VarProp (StructType -> VarHash)))
+;; dummy property to use when no other prop needs updating
+(define dummy-prop
+  (let-values ([(prop prop? prop-ref)
+                (make-interface-property 'unused null null)])
+    prop))
+
+;; bundles->properties : Bundle ...
+;;                    -> (Listof (cons VarProp (Wrap (StructType -> VarHash))))
 (define (bundles->properties #:who [who 'bundles->properties] . bs0)
   (unless (and (list? bs0) (andmap bundle? bs0))
     (raise-argument-error who "(listof bundle?)" bs0))
@@ -1051,13 +1063,23 @@
     (initialize-supers! stype)
     (run-bundles bs linkage)
     (set! initialize! void))
-  (for/list ([export (in-list exports)] #:when (null? (cdr export)))
-    (define ifc (car export))
-    (define uid (rtif-uid ifc))
-    (cons (rtif-vprop ifc)
-          (lambda (super-stype)
-            (initialize! super-stype)
-            (unbox (hash-ref linkage (cons uid '())))))))
+  (define properties
+    (for/list ([export (in-list exports)] #:when (null? (cdr export)))
+      (define ifc (car export))
+      (define uid (rtif-uid ifc))
+      (cons (rtif-vprop ifc)
+            (prop-val-wrapper
+             (lambda (super-stype)
+               (initialize! super-stype)
+               (unbox (hash-ref linkage (cons uid '()))))))))
+  (cond [(pair? properties) properties]
+        [else
+         ;; use dummy to run bundles even if no real properties attached
+         (list (cons dummy-prop
+                     (prop-val-wrapper
+                      (lambda (super-stype)
+                        (initialize! super-stype)
+                        (hasheq)))))]))
 
 ;; bundles-prepare-linkage : Symbol (Listof Bundle1)
 ;;                        -> (values (Listof TaggedInterface)
