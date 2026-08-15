@@ -35,10 +35,8 @@
          unimplemented?
          interface->predicate
          interface-out
-         make-generic
          bundle
          bundle?
-         make-bundle
          bundles->properties
          method-properties
          define/invoke-bundles
