@@ -1,11 +1,12 @@
 #lang scribble/manual
 @(require scribble/example
-          (for-label racket/base racket/contract brandx)
+          (for-label racket/base racket/match racket/math
+                     racket/contract/base brandx)
           (for-label (only-in racket/class
                               this abstract augment inner override)))
 @(begin
   (define the-eval (make-base-eval))
-  (the-eval '(require brandx)))
+  (the-eval '(require racket/match racket/math racket/contract/base brandx)))
 
 @; ----------------------------------------
 @title[#:tag "brandx"]{BrandX: Generics, Interfaces, and Components}
@@ -22,8 +23,138 @@ of @racketmodname[racket/unit].
 @section{Introduction}
 
 
+
+@examples[#:eval the-eval #:label #f
+(define-interface shape
+  ([contains? (-> shape? real? real? boolean?)]
+   [area (-> shape? (>=/c 0))]))
+]
+
+@examples[#:eval the-eval #:label #f
+(struct circle (xc yc r)
+  #:properties
+  (method-properties
+   #:export ([shape #:prefix %])
+
+   (define (%area self)
+     (define r (circle-r self))
+     (* pi r r))
+
+   (define (%contains? self x y)
+     (<= (dist-from-center self x y) (circle-r self)))
+
+   (define (dist-from-center self x y)
+     (match-define (circle xc yc _) self)
+     (sqrt (+ (sqr (- x xc)) (sqr (- y yc)))))
+   ))
+]
+
+@examples[#:eval the-eval #:label #f
+(struct rectangle (x1 y1 x2 y2)
+  (code:comment "x1 <= x2, y1 <= y2")
+  #:properties
+  (method-properties
+   #:export ([shape #:prefix %])
+
+   (define (%area self)
+     (match-define (rectangle x1 y1 x2 y2) self)
+     (* (- x2 x1) (- y2 y1)))
+
+   (define (%contains? self x y)
+     (match-define (rectangle x1 y1 x2 y2) self)
+     (and (<= x1 x x2) (<= y1 y y2)))
+   ))
+]
+
+@examples[#:eval the-eval #:label #f
+(struct union (s1 s2)
+  #:properties
+  (method-properties
+   #:export ([shape #:prefix %])
+
+   (define (%contains? self x y)
+     (match-define (union s1 s2) self)
+     (or (contains? s1 x y) (contains? s2 x y)))
+   ))
+]
+
+@examples[#:eval the-eval #:label #f
+(contains? (circle 0 0 10) 8 9)
+(area (rectangle 1 2 11 22))
+(eval:error (area (rectangle 1 2 0 10)))
+]
+
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
+
+@examples[#:eval the-eval #:label #f
+(define-interface worklist
+  ([empty any/c]
+   [empty? (-> any/c boolean?)]
+   [enqueue (-> any/c any/c any/c)]
+   [dequeue (-> any/c (values any/c any/c))])
+  #:no-generics)
+
+(define queue@
+  (bundle
+   #:export ([worklist #:prefix %])
+   (struct queue (r w))
+   (define %empty (queue null null))
+   (define (%empty? q)
+     (match q [(queue '() '()) #t] [_ #f]))
+   (define (%enqueue q v)
+     (match q
+       [(queue r w) (queue r (cons v w))]))
+   (define (%dequeue q)
+     (match q
+       [(queue (cons v r) w) (values v (queue r w))]
+       [(queue '() '()) (error 'remove "empty queue")]
+       [(queue '() w) (%dequeue (queue (reverse w) '()))]))))
+
+(define stack@
+  (bundle
+   #:export ([worklist #:prefix %])
+   (define %empty null)
+   (define %empty? null?)
+   (define (%enqueue st v) (cons v st))
+   (define (%dequeue st)
+     (match st [(cons v st) (values v st)]))))
+
+(define-interface traversal
+  ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))])
+  #:no-generics)
+
+(define traversal@
+  (bundle
+   #:export ([traversal #:prefix %])
+   #:import (worklist)
+
+   (define (%traverse v get-next)
+     (define q (enqueue empty v))
+     (let loop ([q q])
+       (cond [(empty? q)
+              null]
+             [else
+              (define-values (v q2) (dequeue q))
+              (define q3 (enqueue-all q2 (get-next v)))
+              (cons v (loop q3))])))
+
+   (define (enqueue-all q xs)
+      (for/fold ([q q]) ([x (in-list xs)]) (enqueue q x)))
+   ))
+
+(define (halfsies n)
+  (define half (quotient n 2))
+  (cond [(<= n 1) null]
+        [(even? n) (list half)]
+        [else (list half (add1 half))]))
+
+(define/invoke-bundles #:export ([traversal #:prefix bfs:]) queue@ traversal@)
+(define/invoke-bundles #:export ([traversal #:prefix dfs:]) stack@ traversal@)
+
+(bfs:traverse 100 halfsies)
+(dfs:traverse 100 halfsies)
+]
 
 
 @; ----------------------------------------
@@ -139,6 +270,7 @@ instances where that member name has a value that is not
 @racket[unimplemented?].
 }
 
+@;{
 @defproc[(make-generic [ifc interface?]
                        [name symbol?])
          procedure?]{
@@ -146,7 +278,7 @@ instances where that member name has a value that is not
 Returns a generic function that, when applied, looks up the method associated
 with the @racket[name] member of interface @racket[ifc], and calls it. If
 @racket[name] is not a member name of @racket[ifc], then an error is signaled.
-}
+}}
 
 @defform[(interface-out interface-id)]{
 
@@ -203,18 +335,18 @@ prevent typos from causing missed exports.)
 The @racket[#:import] clause declares the bundle's imports. Like an export, an
 import consists of an interface name, an optional tag, and an optional
 prefix. The special import form @racket[[interface-id #:super]] is equivalent
-to @racket[[intrface-id #:tag (super) #:prefix super-]].
+to @racket[[interface-id #:tag (super) #:prefix super-]].
 
 Imports and exports allow tags to distinguish between multiple occurrences of
 the same interface in the linkage graph. An import in one bundle matches an
 export in another bundle only if both the interface and tag matches. The
 default tag is @racket[()]. The tag @racket[(super)] is special; it is
-forbidden as an export tag, and it is automatically satisfied by the linker
-(using the implementation from the struct super-type, if applicable, or the
-interface's fallbacks).
+forbidden as an export tag, and as an import it is automatically satisfied by
+the linker using the implementation from the struct super-type (if applicable)
+or the interface's fallbacks.
 
 If a @racket[#:link] clause is present, then @racket[bundle-list-expr] must
-evaluated to a list of bundles. The linked bundles are included in the linkage
+evaluate to a list of bundles. The linked bundles are included in the linkage
 graph when the enclosing bundle is linked and invoked. They may satisfy
 imports and consume exports of the enclosing bundle, but their imports and
 exports must not be duplicated in the @racket[#:import] and @racket[#:export]
