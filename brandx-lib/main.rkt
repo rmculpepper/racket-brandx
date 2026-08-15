@@ -33,6 +33,7 @@
          unimplemented?
          interface->predicate
          interface-out
+         inherit
          bundle
          bundle?
          bundles->properties
@@ -765,7 +766,7 @@
     (list #`(cons #,(ctif-rt ifc) (quote #,tag))
           prefix (ctif-vnames ifc) ostx))
 
-  (struct bctx (add-seen! exported-var? build-result))
+  (struct bctx (add-seen! add-inh! exported-var? build-result))
 
   (define (make-bctx einfo-stx)
     (define/with-syntax ((eostx ti-expr eprefix (evname ...)) ...) einfo-stx)
@@ -782,6 +783,7 @@
       (define localname (format-id eprefix "~a~a" eprefix evname))
       (bound-id-table-set! lname=>vname localname evname))
     (define vname=>ref (make-hasheq))
+    (define vname=>inh (make-hasheq))
     (define prefixes* ;; (Listof (cons String Id)), de-duplicated
       (let* ([prefixes (remove-duplicates (datum (eprefix ...)) bound-identifier=?)])
         (filter values (for/list ([prefix (in-list prefixes)])
@@ -806,6 +808,13 @@
                (raise-syntax-error
                 #f "defined name has export prefix but does not match any export" stx id)]
               [else (void)])))
+    (define (add-inh! ids stx)
+      (for ([id (in-list ids)])
+        (cond [(bound-id-table-ref lname=>vname id #f)
+               => (lambda (vname) (hash-set! vname=>inh vname id))]
+              [else
+               (raise-syntax-error
+                #f "inherited name does not match any export" stx id)])))
     (define (exported-var? id)
       (unless lname=>t
         ;; must wait until pass2 to build free-id-table,
@@ -815,6 +824,7 @@
           (free-id-table-set! lname=>t ref #t)))
       (and (free-id-table-ref lname=>t id #f) #t))
     (define (build-result linkage-expr)
+      (check-complete)
       (define/with-syntax linkage linkage-expr)
       #`(begin
           #,@(for/list ([eostx (in-list eostxs)]
@@ -831,10 +841,28 @@
                                '(def-vname ...) '(def-index ...)
                                (list def-lname ...)))
           (void)))
+    (define (check-complete)
+      (for ([eostx (in-list eostxs)]
+            [evnames (in-list evnamess)]
+            #:when #t
+            [evname (in-list evnames)])
+        (cond [(hash-has-key? vname=>ref evname)
+               (define inh (hash-ref vname=>inh evname #f))
+               (when (identifier? inh)
+                 (raise-syntax-error
+                  #f "member name both defined and declared inherited" inh))]
+              [(not (hash-ref vname=>inh evname #f))
+               (raise-syntax-error
+                #f (format "member name not defined or declared inherited: ~s" evname)
+                eostx)])))
     ;; ----
     (bctx add-seen!
+          add-inh!
           exported-var?
           build-result)))
+
+(define-syntax (inherit stx)
+  (raise-syntax-error #f "used out of bundle context" stx))
 
 (define-syntax (method-properties stx)
   (case (syntax-local-context)
@@ -886,8 +914,10 @@
   (syntax-parse stx
     [(_ ctx-id body)
      (define ctx (syntax-local-value #'ctx-id))
-     (define ee (local-expand #'body (syntax-local-context) #f))
+     (define stops (syntax->list #'(inherit begin define-values define-syntaxes)))
+     (define ee (local-expand #'body (syntax-local-context) stops))
      (syntax-parse ee
+       #:literals (inherit)
        #:literal-sets (kernel-literals)
        [(begin ~! form ...)
         #'(begin (bundle-body-wrap ctx-id form) ...)]
@@ -899,6 +929,10 @@
         (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
           ((bctx-add-seen! ctx) vars ee))
         ee]
+       [(inherit ~! var:id ...)
+        (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
+          ((bctx-add-inh! ctx) vars ee))
+        #'(begin)]
        [_ #`(#%expression (bundle-expr-wrap ctx-id #,ee))])]))
 
 (define-syntax (bundle-expr-wrap stx)
