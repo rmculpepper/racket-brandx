@@ -8,7 +8,7 @@
 ;; - interface contracts cannot refer to interface members
 
 ;; TODO:
-;; - no-generics implies no predicate, no prop
+;; - no-generics implies no prop
 ;; - drop #:dynamic-public, pubnames
 ;; - add ordering constraints, eg import with #:prereq
 ;; - add inspector, add reflective operations
@@ -251,12 +251,11 @@
   ;; CtInterface:
   (struct ctif
     (name       ;; Identifier
-     predicate  ;; Identifier
      uid        ;; InterfaceKey
      rt         ;; Id[RtInterface]
      supers     ;; (Listof CtInterface)
      vnames     ;; (Listof Symbol)
-     ginfo      ;; (Listof (list Identifier Identifier)) or #f
+     ginfo      ;; (Listof Identifier) or #f
      )
     #:property prop:custom-write
     (lambda (self out mode)
@@ -266,7 +265,7 @@
       ((make-variable-like-transformer (ctif-rt self)) stx)))
 
   (define (create-ctif info-stx)
-    (define/with-syntax (iname iname? rtname (super-id ...) (vname ...) ginfo)
+    (define/with-syntax (iname rtname (super-id ...) (vname ...) ginfo)
       info-stx)
     (define uid (string->uninterned-symbol (symbol->string (syntax-e #'iname))))
     ;; FIXME: check no duplicate names
@@ -293,7 +292,7 @@
       (syntax-parse #'ginfo
         [(gname:id ...) (datum (gname ...))]
         [#f #f]))
-    (ctif #'iname #'iname? uid #'rtname supers (syntax->datum #'(vname ...)) ginfo*))
+    (ctif #'iname uid #'rtname supers (syntax->datum #'(vname ...)) ginfo*))
 
   (define-syntax-class interface-ref
     #:attributes (value)
@@ -344,13 +343,14 @@
                     #:name "no-generics clause")
          dc:derive-clause)
         ...)
-     (when (and (datum gprefix) (datum no-generics?))
-       (raise-syntax-error #f "cannot use both #:generics-prefix and #:no-generics" stx))
+     (when (datum no-generics?)
+       (when (datum gprefix)
+         (wrong-syntax "cannot use both #:no-generics and #:generics-prefix"))
+       (when (datum predicate)
+         (wrong-syntax "cannot use both #:no-generics and #:predicate")))
      (define public?s
        (for/list ([get-public? (in-list (datum (d.get-public? ...)))])
          (get-public? (datum all-public?))))
-     (define/with-syntax iname?
-       (or (datum predicate) (format-id #'iname "~a?" #'iname)))
      (define/with-syntax (rtname) (generate-temporaries #'(iname)))
      (define/with-syntax (vname ...) #'(d.name ...))
      (define/with-syntax (pubname ...)
@@ -360,9 +360,12 @@
          vname))
      (define/with-syntax (ctcname ...)
        (generate-temporaries (datum (vname ...))))
-     (define/with-syntax (generic-defs ginfo)
-       (cond [(datum no-generics?) #'[(begin) #f]]
+     (define/with-syntax ((early-def ...) (late-def ...) ginfo)
+       (cond [(datum no-generics?)
+              (list null null #'#f)]
              [else
+              (define/with-syntax iname?
+                (or (datum predicate) (format-id #'iname "~a?" #'iname)))
               (define/with-syntax (gname ...)
                 (cond [(datum gprefix)
                        (for/list ([vname (in-list (datum (vname ...)))])
@@ -370,28 +373,29 @@
                       [else #'(vname ...)]))
               (define/with-syntax (vctc? ...)
                 (map syntax? (datum ((~? d.ctc #f) ...))))
-              #'[(define-interface-generics iname ((vctc? gname vname) ...))
-                 (gname ...)]]))
+              #'[[(define (iname? v) ;; define early, available for ctcs
+                    (and (not (struct-type? v)) ((rtif-vprop? rtname) v)))]
+                 [(define-interface-generics iname ((vctc? gname vname) ...))]
+                 (iname? gname ...)]]))
      (define/with-syntax (pre-def ...)
        ;; fixes unbound-identifier errors when used at top level
        (cond [(eq? (syntax-local-context) 'top-level)
-              (list #'(define-syntaxes (iname? rtname) (values)))]
+              (list #'(define-syntaxes (rtname) (values)))]
              [else null]))
      #'(begin
          pre-def ...
          (define-syntax iname
            (create-ctif
             (quote-syntax
-             (iname iname? rtname (s.super ...) (vname ...) ginfo))))
-         (define (iname? v) ;; define early, available for ctcs
-           (and (not (struct-type? v)) ((rtif-vprop? rtname) v)))
+             (iname rtname (s.super ...) (vname ...) ginfo))))
+         early-def ...
          (define rtname
            (let ([ctcname (~? (coerce-contract 'define-interface d.ctc) #f)] ...)
              (create-rtif-from-ctif iname (quote (pubname ...))
                                     (vector-immutable ctcname ...)
                                     (~? fallbacks.c (hasheq))
                                     (list dc.kvpair ...))))
-         generic-defs)]))
+         late-def ...)]))
 
 (define-syntax (define-interface-generics stx)
   (syntax-parse stx
