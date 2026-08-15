@@ -765,60 +765,76 @@
     (list #`(cons #,(ctif-rt ifc) (quote #,tag))
           prefix (ctif-vnames ifc) ostx))
 
-  (struct bctx (ostxs tis prefixes vnamess lname=>vname vname=>ref [lname=>t #:mutable]))
+  (struct bctx (add-seen! exported-var? build-result))
 
   (define (make-bctx einfo-stx)
     (define/with-syntax ((eostx ti-expr eprefix (evname ...)) ...) einfo-stx)
+    (define eostxs (datum (eostx ...)))
+    (define etis (datum (ti-expr ...)))
+    (define eprefixes (datum (eprefix ...)))
+    (define evnamess (syntax->datum #'((evname ...) ...)))
     (define lname=>vname (make-bound-id-table))
-    (for ([eprefix (in-list (datum (eprefix ...)))]
-          [evnames (in-list (datum ((evname ...) ...)))]
+    (define lname=>t #f) ;; mutated, (FreeIdTable #t)
+    (for ([eprefix (in-list eprefixes)]
+          [evnames (in-list evnamess)]
           #:when #t
           [evname (in-list evnames)])
       (define localname (format-id eprefix "~a~a" eprefix evname))
-      (bound-id-table-set! lname=>vname localname (syntax-e evname)))
+      (bound-id-table-set! lname=>vname localname evname))
     (define vname=>ref (make-hasheq))
-    (define (nonempty-id? id) ;; empty includes '|| but also empty non-interned symbols
-      (not (zero? (string-length (symbol->string (syntax-e id))))))
-    (define prefixes*
+    (define prefixes* ;; (Listof (cons String Id)), de-duplicated
       (let* ([prefixes (remove-duplicates (datum (eprefix ...)) bound-identifier=?)])
         (filter values (for/list ([prefix (in-list prefixes)])
                          (define str (symbol->string (syntax-e prefix)))
                          (and (positive? (string-length str))
                               (cons str prefix))))))
-    (bctx (datum (eostx ...)) (datum (ti-expr ...)) prefixes*
-          (syntax->datum #'((evname ...) ...)) lname=>vname vname=>ref #f))
-
-  (define (bctx-add-seen! ctx ids stx)
-    (match-define (bctx _ _ prefixes _ lname=>vname vname=>ref lname=>t) ctx)
     (define (prefixed-id? id) ;; starts with a prefix and has right scopes
       (define sym (syntax-e id))
       (define str (symbol->string sym))
-      (for/or ([prefixp (in-list prefixes)])
+      (for/or ([prefixp (in-list prefixes*)])
         (match-define (cons pstr pid) prefixp)
         (and (<= (string-length pstr) (string-length str))
              (equal? pstr (substring str 0 (string-length pstr)))
              (let ([id* (datum->syntax pid sym)])
                (bound-identifier=? id id*)))))
-    (for ([id (in-list ids)])
-      (cond [(bound-id-table-ref lname=>vname id #f)
-             => (lambda (vname) (hash-set! vname=>ref vname id))]
-            [(prefixed-id? id)
-             (raise-syntax-error
-              #f "defined name has export prefix but does not match any export" stx id)]
-            [else (void)])))
-
-  (define (bctx-exported-var? ctx id)
-    (unless (bctx-lname=>t ctx)
-      ;; must wait until pass2 to build free-id-table,
-      ;; because identifier-binding-symbol may change
-      (define lname=>t (make-free-id-table))
-      (for ([ref (in-hash-values (bctx-vname=>ref ctx))])
-        (free-id-table-set! lname=>t ref #t))
-      (set-bctx-lname=>t! ctx lname=>t))
-    (define lname=>t (bctx-lname=>t ctx))
-    (and (free-id-table-ref lname=>t id #f) #t))
-
-  (void))
+    ;; ----
+    (define (add-seen! ids stx)
+      (for ([id (in-list ids)])
+        (cond [(bound-id-table-ref lname=>vname id #f)
+               => (lambda (vname) (hash-set! vname=>ref vname id))]
+              [(prefixed-id? id)
+               (raise-syntax-error
+                #f "defined name has export prefix but does not match any export" stx id)]
+              [else (void)])))
+    (define (exported-var? id)
+      (unless lname=>t
+        ;; must wait until pass2 to build free-id-table,
+        ;; because identifier-binding-symbol may change
+        (set! lname=>t (make-free-id-table))
+        (for ([ref (in-hash-values vname=>ref)])
+          (free-id-table-set! lname=>t ref #t)))
+      (and (free-id-table-ref lname=>t id #f) #t))
+    (define (build-result linkage-expr)
+      (define/with-syntax linkage linkage-expr)
+      #`(begin
+          #,@(for/list ([eostx (in-list eostxs)]
+                        [eti (in-list etis)]
+                        [evnames (in-list evnamess)])
+               (define/with-syntax ((def-vname def-index def-lname) ...)
+                 (for/list ([evname (in-list evnames)]
+                            [index (in-naturals)]
+                            #:when (hash-has-key? vname=>ref evname))
+                   (define lname (syntax-local-introduce (hash-ref vname=>ref evname)))
+                   (list evname index lname)))
+               #`(linkage-set! linkage #,eti (current-contract-region)
+                               (quote-syntax #,eostx)
+                               '(def-vname ...) '(def-index ...)
+                               (list def-lname ...)))
+          (void)))
+    ;; ----
+    (bctx add-seen!
+          exported-var?
+          build-result)))
 
 (define-syntax (method-properties stx)
   (case (syntax-local-context)
@@ -877,11 +893,11 @@
         #'(begin (bundle-body-wrap ctx-id form) ...)]
        [(define-values ~! (var:id ...) rhs:expr)
         (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
-          (bctx-add-seen! ctx vars ee))
+          ((bctx-add-seen! ctx) vars ee))
         #'(define-values (var ...) (bundle-expr-wrap ctx-id rhs))]
        [(define-syntaxes ~! (var:id ...) . _)
         (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
-          (bctx-add-seen! ctx vars ee))
+          ((bctx-add-seen! ctx) vars ee))
         ee]
        [_ #`(#%expression (bundle-expr-wrap ctx-id #,ee))])]))
 
@@ -913,7 +929,7 @@
          [(#%plain-app e ...)
           (loop* #'(e ...))]
          [(set! var rhs)
-          (when (bctx-exported-var? ctx (syntax-local-introduce #'var))
+          (when ((bctx-exported-var? ctx) (syntax-local-introduce #'var))
             (raise-syntax-error #f "attempt to mutate exported variable" e #'var))
           (loop #'rhs)]
          [_ (void)]))
@@ -926,21 +942,7 @@
   (syntax-parse stx
     [(_ ctx-id linkage)
      (define ctx (syntax-local-value #'ctx-id))
-     (match-define (bctx eostxs etis _ evnamess _ vname=>ref _) ctx)
-     #`(begin
-         #,@(for/list ([eostx (in-list eostxs)]
-                       [eti (in-list etis)]
-                       [evnames (in-list evnamess)])
-              (define/with-syntax ((def-vname def-index def-localname) ...)
-                (for/list ([evname (in-list evnames)]
-                           [index (in-naturals)]
-                           #:when (hash-has-key? vname=>ref evname))
-                  (define localname (syntax-local-introduce (hash-ref vname=>ref evname)))
-                  (list evname index localname)))
-              #`(linkage-set! linkage #,eti (current-contract-region) (quote-syntax #,eostx)
-                              '(def-vname ...) '(def-index ...)
-                              (list def-localname ...)))
-         (void))]))
+     ((bctx-build-result ctx) #'linkage)]))
 
 (define (linkage-set! linkage ti impl-party src-stx vnames vindexes vvalues)
   (define lkey (tagged-interface->linkage-key ti))
