@@ -9,7 +9,6 @@
 
 ;; TODO:
 ;; - no-generics implies no prop
-;; - drop #:dynamic-public, pubnames
 ;; - add ordering constraints, eg import with #:prereq
 ;; - add inspector, add reflective operations
 ;;   - util to check no unimplemented methods (except given list)
@@ -122,7 +121,6 @@
    uid          ;; InterfaceKey
    supers       ;; (Listof RtInterface)
    vnames       ;; (Listof Symbol)
-   pubnames     ;; (Listof Symbol) -- subset of vnames
    ctcv         ;; (Vectorof (U Contract #f)) -- needed by module boundary
    in-ctcv      ;; (Vectorof (Any Party Location -> Any)) -- used to check impls
    out-ctcv     ;; (Vectorof (Any Party Location -> Any))
@@ -146,10 +144,10 @@
   (define-values (ifcs* _h) (closure ifcs ifcs rtif-supers))
   ifcs*)
 
-;; create-rtif : Symbol Symbol (Listof Symbol) (Listof Symbol)
+;; create-rtif : Symbol Symbol (Listof Symbol)
 ;;               (Vectorof (U Contract #f)) DeriveProps VarHash
 ;;            -> RtInterface
-(define (create-rtif iname uid supers vnames pubnames ctcv derives fallbacks)
+(define (create-rtif iname uid supers vnames ctcv derives fallbacks)
   (define len (length vnames))
   (define-values (vprop vprop? vprop-ref)
     (make-interface-property iname vnames derives))
@@ -168,7 +166,7 @@
   (for ([key (in-hash-keys fallbacks)] #:when (not (hash-has-key? fallbacks* key)))
     (error 'interface "unexpected key in fallbacks\n  key: ~e\n  interface: ~e"
            key iname))
-  (rtif iname uid supers vnames pubnames ctcv in-ctcv out-ctcv
+  (rtif iname uid supers vnames ctcv in-ctcv out-ctcv
         fallbacks* vprop vprop? vprop-ref))
 
 (define (make-interface-property iname vnames derives)
@@ -301,26 +299,23 @@
 
 (define-syntax (create-rtif-from-ctif stx)
   (syntax-parse stx
-    [(_ ifc:interface-ref pubnames:expr ctcv:expr fallbacks:expr derives:expr)
+    [(_ ifc:interface-ref ctcv:expr fallbacks:expr derives:expr)
      (define ct (datum ifc.value))
-     (match-define (ctif iname _ uid _ supers vnames _) (datum ifc.value))
+     (match-define (ctif iname uid _ supers vnames _) (datum ifc.value))
      (with-syntax ([iname iname] [uid uid] [vnames vnames])
        (with-syntax ([(super-ifcvar ...) (map ctif-rt supers)])
          #`(create-rtif (quote iname) (quote uid) (list super-ifcvar ...)
-                        (quote vnames) pubnames ctcv derives fallbacks)))]))
+                        (quote vnames) ctcv derives fallbacks)))]))
 
 (define-syntax (define-interface stx)
   (define-syntax-class var-decl
-    #:attributes (name src ctc get-public?)
+    #:attributes (name src ctc)
     (pattern name:id
              #:with src #'name
-             #:attr ctc #f
-             #:attr get-public? (lambda (all-public?) all-public?))
+             #:attr ctc #f)
     (pattern [name:id
-              (~optional ctc:expr)
-              (~optional (~seq #:dynamic-public (~bind [public? #t])))]
-             #:with src (datum->syntax #f (list #'name '....) this-syntax)
-             #:attr get-public? (lambda (all-public?) (or all-public? (datum public?)))))
+              (~optional ctc:expr)]
+             #:with src (datum->syntax #f (list #'name '....) this-syntax)))
   (define-splicing-syntax-class maybe-super
     (pattern (~seq #:super (super:interface-ref ...)))
     (pattern (~seq) #:with (super ...) null))
@@ -333,8 +328,6 @@
     [(_ iname:id s:maybe-super (~optional (~seq #:predicate predicate:id))
         (d:var-decl ...)
         (~alt
-         (~optional (~seq #:dynamic-public (~bind [all-public? #t]))
-                    #:name "dynamic-public clause")
          (~optional (~seq #:fallbacks (~var fallbacks (expr/c #'fallbacks/c)))
                     #:name "fallbacks clause")
          (~optional (~seq #:generics-prefix gprefix:id)
@@ -348,16 +341,8 @@
          (wrong-syntax "cannot use both #:no-generics and #:generics-prefix"))
        (when (datum predicate)
          (wrong-syntax "cannot use both #:no-generics and #:predicate")))
-     (define public?s
-       (for/list ([get-public? (in-list (datum (d.get-public? ...)))])
-         (get-public? (datum all-public?))))
      (define/with-syntax (rtname) (generate-temporaries #'(iname)))
      (define/with-syntax (vname ...) #'(d.name ...))
-     (define/with-syntax (pubname ...)
-       (for/list ([vname (in-list (datum (vname ...)))]
-                  [public? (in-list public?s)]
-                  #:when public?)
-         vname))
      (define/with-syntax (ctcname ...)
        (generate-temporaries (datum (vname ...))))
      (define/with-syntax ((early-def ...) (late-def ...) ginfo)
@@ -391,8 +376,7 @@
          early-def ...
          (define rtname
            (let ([ctcname (~? (coerce-contract 'define-interface d.ctc) #f)] ...)
-             (create-rtif-from-ctif iname (quote (pubname ...))
-                                    (vector-immutable ctcname ...)
+             (create-rtif-from-ctif iname (vector-immutable ctcname ...)
                                     (~? fallbacks.c (hasheq))
                                     (list dc.kvpair ...))))
          late-def ...)]))
@@ -434,7 +418,7 @@
              [else null]))
      #'(begin
          (define uname
-           (make-generic* rtname (quote vname) (quote gname) #f #t))
+           (make-generic* rtname (quote vname) (quote gname) #f))
          ...
          (define-values (lname ...)
            (apply values
@@ -496,19 +480,17 @@
 (define (make-generic ifc name)
   (unless (interface? ifc) (raise-argument-error 'make-generic "interface?" ifc))
   (unless (symbol? name) (raise-argument-error 'make-generic "symbol?" name))
-  (or (make-generic* ifc name name #t #f)
+  (or (make-generic* ifc name name #t)
       (error/no-method 'make-generic ifc name)))
 
-;; make-generic* : RtInterface Symbol Boolean Boolean
+;; make-generic* : RtInterface Symbol Boolean
 ;;              -> (Instance Any ... -> Any) or #f
-(define (make-generic* ifc seek-name name ctc? allow-private?)
+(define (make-generic* ifc seek-name name ctc?)
   (let loop ([ifc ifc])
     (or (for/first ([vname (in-list (rtif-vnames ifc))]
                     [index (in-naturals 1)]
                     [staged-out-ctc (in-vector (rtif-out-ctcv ifc))]
-                    #:when (and (eq? vname seek-name)
-                                (or allow-private?
-                                    (memq seek-name (rtif-pubnames ifc)))))
+                    #:when (eq? vname seek-name))
           (define iname (rtif-name ifc))
           (define vprop? (rtif-vprop? ifc))
           (define vprop-ref (rtif-vprop-ref ifc))
@@ -528,9 +510,7 @@
         (ormap loop (rtif-supers ifc)))))
 
 (define (error/no-method who ifc name)
-  (error who
-         (string-append "no dynamic-public member found"
-                        "\n  interface: ~e\n  name: ~e")
+  (error who "no member found \n  interface: ~e\n  name: ~e"
          ifc name))
 
 
