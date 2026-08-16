@@ -33,7 +33,6 @@
          unimplemented?
          interface->predicate
          interface-out
-         inherit
          bundle
          bundle?
          bundles->properties
@@ -265,6 +264,10 @@
     #:property prop:procedure
     (lambda (self stx)
       ((make-variable-like-transformer (ctif-rt self)) stx)))
+
+  (define (ctif-all-vnames ifc)
+    (define-values (all-ifcs _h) (closure (list ifc) (list #f) ctif-supers))
+    (apply append (map ctif-vnames all-ifcs)))
 
   (define (create-ctif info-stx)
     (define/with-syntax (iname rtname (super-id ...) (vname ...) ginfo)
@@ -657,32 +660,47 @@
 ;; ----------------------------------------
 
 (begin-for-syntax
-  (struct impexp (ostx ifc tag prefix) #:transparent)
+  (struct impexp (ostx ifc tag prefix excepts) #:transparent)
 
   (define-syntax-class export-spec
     #:attributes (ast)
     (pattern ifc:interface-ref
              #:attr ast
              (let ([prefix (format-id #'ifc "")])
-               (impexp this-syntax (datum ifc.value) '() prefix)))
+               (impexp this-syntax (datum ifc.value) '() prefix #f)))
     (pattern [ifc:interface-ref
               (~alt
                (~optional (~seq #:tag (tagp:id ...))
                           #:name "tag clause")
+               (~optional xc:export-except-clause
+                          #:name "except clause")
                (~optional (~seq #:prefix prefix:id)
                           #:name "prefix clause"))
               ...]
              #:attr ast
              (let ([tag (syntax->datum #'(~? (tagp ...) ()))]
+                   [excepts (datum (~? (xc.xname ...) #f))]
                    [prefix (or (datum prefix) (format-id #'ifc ""))])
-               (impexp this-syntax (datum ifc.value) tag prefix))))
+               (when (and excepts (pair? excepts))
+                 (define all-vnames (ctif-all-vnames (datum ifc.value)))
+                 (for ([except-id (in-list excepts)])
+                   (unless (memq (syntax-e except-id) all-vnames)
+                     (wrong-syntax except-id
+                                   "name in except-list is not member of interface"))))
+               (impexp this-syntax (datum ifc.value) tag prefix
+                       (and excepts (map syntax-e excepts))))))
+
+  (define-splicing-syntax-class export-except-clause
+    #:attributes ([xname 1])
+    (pattern (~seq #:all) #:with (xname ...) null)
+    (pattern (~seq #:except (xname:id ...))))
 
   (define-syntax-class import-spec
     #:attributes (ast)
     (pattern ifc:interface-ref
              #:attr ast
              (let ([prefix (format-id #'ifc "")])
-               (impexp this-syntax (datum ifc.value) '() prefix)))
+               (impexp this-syntax (datum ifc.value) '() prefix #f)))
     (pattern [ifc:interface-ref
               (~alt
                (~optional t:import-tag-clause
@@ -694,7 +712,7 @@
              (let ([tag (or (datum t.tag) null)]
                    [prefix (or (datum prefix)
                                (format-id #'ifc (or (datum t.prefix) "")))])
-               (impexp this-syntax (datum ifc.value) tag prefix))))
+               (impexp this-syntax (datum ifc.value) tag prefix #f))))
 
   (define-splicing-syntax-class import-tag-clause
     #:attributes (tag prefix)
@@ -705,18 +723,7 @@
              #:attr tag (syntax->datum #'(t ...))
              #:attr prefix #f))
 
-  (define (impexp-supers ie)
-    (match-define (impexp ostx ifc tag prefix) ie)
-    (for/list ([super-ifc (in-list (ctif-supers ifc))])
-      (impexp ostx super-ifc tag prefix)))
-
   (define (impexp->ti ie) (cons (impexp-ifc ie) (impexp-tag ie)))
-
-  (define (impexp-compat? ie1 ie2)
-    (match-define (impexp _ ifc1 tag1 prefix1) ie1)
-    (match-define (impexp _ ifc2 tag2 prefix2) ie2)
-    (and (eq? ifc1 ifc2) (equal? tag1 tag2)
-         (bound-identifier=? prefix1 prefix2)))
 
   (define (ct-ti-supers ti)
     (match-define (cons ifc tag) ti)
@@ -727,53 +734,61 @@
       [(cons ifc '()) (format "~.s" (syntax-e (ctif-name ifc)))]
       [(cons ifc tag) (format "~.s #:tag ~.s" (syntax-e (ctif-name ifc)) tag)]))
 
-  (define (check-impexps ies check-names? stx whats)
-    (define tis (map impexp->ti ies))
-    (define-values (all-tis ti=>ies) (closure tis ies ct-ti-supers))
-    ;; each ti must have one prefix; if so, map to one import (first occurring in BFS)
-    (define ti=>ie (make-hash))
-    (for ([ti (in-list all-tis)])
-      (define ies (reverse (hash-ref ti=>ies ti)))
-      (define ie0 (car ies))
-      (define prefix0 (impexp-prefix ie0))
-      (for ([ie (in-list (cdr ies))])
-        (unless (bound-identifier=? prefix0 (impexp-prefix ie))
-          (define ti-string (ct-ti->string ti))
-          (raise-syntax-error
-           #f (format "incompatible ~a; prefixes differ\n  interface: ~a" whats ti-string)
-           stx #f (list (impexp-ostx ie0) (impexp-ostx ie)))))
-      (hash-set! ti=>ie ti ie0))
-    ;; make sure each prefixed name has only one binding
-    (when check-names?
-      (define id=>ie (make-bound-id-table))
-      (for ([ti (in-list all-tis)])
-        (define ie (hash-ref ti=>ie ti))
-        (match-define (impexp ostx _ tag prefix) ie)
-        (for ([vname (in-list (ctif-vnames (car ti)))])
-          (define id (format-id prefix "~a~a" prefix vname))
-          (define already-ie (bound-id-table-ref id=>ie id #f))
-          (when already-ie
-            (raise-syntax-error
-             #f (format "incompatible ~a\n  name collision: ~.s" whats (syntax-e id))
-             stx #f (list (impexp-ostx already-ie) ostx)))
-          (bound-id-table-set! id=>ie id ie))))
-    ;; ----
+  ;; elaborate-impexps : (Listof ImpExp) String -> (Listof ImpExp)
+  ;; Elaborate list to all super interfaces, check for consistency.
+  (define (elaborate-impexps ies whats)
+    (define-values (all-tis ti=>ies)
+      (closure (map impexp->ti ies) ies ct-ti-supers))
+    ;; each ti must have consistent prefix and except-list;
+    ;; if so, map to one import (first occurring in BFS)
     (for/list ([ti (in-list all-tis)])
-      (cons ti (hash-ref ti=>ie ti))))
+      (define ies (reverse (hash-ref ti=>ies ti)))
+      (define ie1 (car ies))
+      (for ([ie2 (in-list (cdr ies))])
+        (check-compat-impexps ie1 ie2 whats))
+      (match-define (impexp ostx _ tag prefix excepts) ie1)
+      (impexp ostx (car ti) tag prefix excepts)))
 
-  (define (ti+ie-extract ti+ie)
-    (match-define (cons (cons ifc tag) (impexp ostx _ _ prefix)) ti+ie)
+  (define (check-compat-impexps ie1 ie2 whats)
+    (define (ti-string) (ct-ti->string (impexp->ti ie1)))
+    (unless (bound-identifier=? (impexp-prefix ie1) (impexp-prefix ie2))
+      (raise-syntax-error
+       #f (format "incompatible ~a; prefixes differ\n  interface: ~a" whats (ti-string))
+       (current-syntax-context) #f (list (impexp-ostx ie1) (impexp-ostx ie2))))
+    (unless (equal? (impexp-excepts ie1) (impexp-excepts ie2)) ;; FIXME: refine
+      (raise-syntax-error
+       #f (format "incompatible ~a; export exceptions differ\n  interface: ~a"
+                  whats (ti-string))
+       (current-syntax-context) #f (list (impexp-ostx ie1) (impexp-ostx ie2)))))
+
+  (define (check-impexps-for-collisions all-ies)
+    ;; make sure each prefixed name has only one binding
+    (define id=>ie (make-bound-id-table))
+    (for ([ie (in-list all-ies)])
+      (match-define (impexp ostx ifc _ prefix _) ie)
+      (for ([vname (in-list (ctif-vnames ifc))])
+        (define id (format-id prefix "~a~a" prefix vname))
+        (define already-ie (bound-id-table-ref id=>ie id #f))
+        (when already-ie
+          (raise-syntax-error
+           #f (format "incompatible import/export\n  name collision: ~.s" (syntax-e id))
+           (current-syntax-context) #f (list (impexp-ostx already-ie) ostx)))
+        (bound-id-table-set! id=>ie id ie))))
+
+  (define (impexp-extract ie)
+    (match-define (impexp ostx ifc tag prefix excepts) ie)
     (list #`(cons #,(ctif-rt ifc) (quote #,tag))
-          prefix (ctif-vnames ifc) ostx))
+          prefix (ctif-vnames ifc) excepts ostx))
 
-  (struct bctx (add-seen! add-inh! exported-var? build-result))
+  (struct bctx (add-seen! exported-var? build-result))
 
   (define (make-bctx einfo-stx)
-    (define/with-syntax ((eostx ti-expr eprefix (evname ...)) ...) einfo-stx)
+    (define/with-syntax ((eostx ti-expr eprefix (evname ...) eexcepts) ...) einfo-stx)
     (define eostxs (datum (eostx ...)))
     (define etis (datum (ti-expr ...)))
     (define eprefixes (datum (eprefix ...)))
     (define evnamess (syntax->datum #'((evname ...) ...)))
+    (define eexceptss (syntax->datum #'(eexcepts ...)))
     (define lname=>vname (make-bound-id-table))
     (define lname=>t #f) ;; mutated, (FreeIdTable #t)
     (for ([eprefix (in-list eprefixes)]
@@ -783,7 +798,6 @@
       (define localname (format-id eprefix "~a~a" eprefix evname))
       (bound-id-table-set! lname=>vname localname evname))
     (define vname=>ref (make-hasheq))
-    (define vname=>inh (make-hasheq))
     (define prefixes* ;; (Listof (cons String Id)), de-duplicated
       (let* ([prefixes (remove-duplicates (datum (eprefix ...)) bound-identifier=?)])
         (filter values (for/list ([prefix (in-list prefixes)])
@@ -808,13 +822,6 @@
                (raise-syntax-error
                 #f "defined name has export prefix but does not match any export" stx id)]
               [else (void)])))
-    (define (add-inh! ids stx)
-      (for ([id (in-list ids)])
-        (cond [(bound-id-table-ref lname=>vname id #f)
-               => (lambda (vname) (hash-set! vname=>inh vname id))]
-              [else
-               (raise-syntax-error
-                #f "inherited name does not match any export" stx id)])))
     (define (exported-var? id)
       (unless lname=>t
         ;; must wait until pass2 to build free-id-table,
@@ -824,45 +831,43 @@
           (free-id-table-set! lname=>t ref #t)))
       (and (free-id-table-ref lname=>t id #f) #t))
     (define (build-result linkage-expr)
-      (check-complete)
       (define/with-syntax linkage linkage-expr)
       #`(begin
           #,@(for/list ([eostx (in-list eostxs)]
                         [eti (in-list etis)]
-                        [evnames (in-list evnamess)])
-               (define/with-syntax ((def-vname def-index def-lname) ...)
+                        [evnames (in-list evnamess)]
+                        [eexcepts (in-list eexceptss)])
+               (define (excepted? name)
+                 (and eexcepts (memq name eexcepts)))
+               (define vname+index+lname-list
                  (for/list ([evname (in-list evnames)]
-                            [index (in-naturals)]
-                            #:when (hash-has-key? vname=>ref evname))
-                   (define lname (syntax-local-introduce (hash-ref vname=>ref evname)))
-                   (list evname index lname)))
+                            [index (in-naturals)])
+                   (cond [(hash-has-key? vname=>ref evname)
+                          (define lname
+                            (syntax-local-introduce (hash-ref vname=>ref evname)))
+                          (when (and eexcepts (memq evname eexcepts))
+                            ;; error: defined but excepted
+                            (raise-syntax-error
+                             #f "member name is defined but in except-list"
+                             eostx lname))
+                          (list evname index lname)]
+                         [(and eexcepts (not (memq evname eexcepts)))
+                          ;; error: not defined (and not excepted)
+                          (raise-syntax-error
+                           #f (format "required member name is not defined: ~s" evname)
+                           eostx)]
+                         [else #f])))
+               (define/with-syntax ((def-vname def-index def-lname) ...)
+                 (filter values vname+index+lname-list))
                #`(linkage-set! linkage #,eti (current-contract-region)
                                (quote-syntax #,eostx)
                                '(def-vname ...) '(def-index ...)
                                (list def-lname ...)))
           (void)))
-    (define (check-complete)
-      (for ([eostx (in-list eostxs)]
-            [evnames (in-list evnamess)]
-            #:when #t
-            [evname (in-list evnames)])
-        (cond [(hash-has-key? vname=>ref evname)
-               (define inh (hash-ref vname=>inh evname #f))
-               (when (identifier? inh)
-                 (raise-syntax-error
-                  #f "member name both defined and declared inherited" inh))]
-              [(not (hash-ref vname=>inh evname #f))
-               (raise-syntax-error
-                #f (format "member name not defined or declared inherited: ~s" evname)
-                eostx)])))
     ;; ----
     (bctx add-seen!
-          add-inh!
           exported-var?
           build-result)))
-
-(define-syntax (inherit stx)
-  (raise-syntax-error #f "used out of bundle context" stx))
 
 (define-syntax (method-properties stx)
   (case (syntax-local-context)
@@ -892,12 +897,13 @@
                     #:name "link clause"))
         ...
         body:body-term ...)
-     (define eti+ie-list (check-impexps (datum (~? (e.ast ...) ())) #f stx "exports"))
-     (define iti+ie-list (check-impexps (datum (~? (i.ast ...) ())) #t stx "imports"))
-     (define/with-syntax ((eti eprefix evnames eostx) ...)
-       (map ti+ie-extract eti+ie-list))
-     (define/with-syntax ((iti iprefix ivnames iostx) ...)
-       (map ti+ie-extract iti+ie-list))
+     (define eies (elaborate-impexps (datum (~? (e.ast ...) ())) "exports"))
+     (define iies (elaborate-impexps (datum (~? (i.ast ...) ())) "imports"))
+     (check-impexps-for-collisions (append eies iies))
+     (define/with-syntax ((eti eprefix evnames eexcepts eostx) ...)
+       (map impexp-extract eies))
+     (define/with-syntax ((iti iprefix ivnames _ iostx) ...)
+       (map impexp-extract iies))
      #`(make-bundle*
         (bundle1
          (list eti ...) (list iti ...)
@@ -905,7 +911,7 @@
            (define-names #:lazy iprefix ivnames iti linkage iostx)
            ...
            (define-syntaxes (the-bctx)
-             (make-bctx (quote-syntax ((eostx eti eprefix evnames) ...))))
+             (make-bctx (quote-syntax ((eostx eti eprefix evnames eexcepts) ...))))
            (bundle-body-wrap the-bctx body) ...
            (#%expression (bundle-body-result the-bctx linkage))))
         (~? link-bs.c null))]))
@@ -914,10 +920,8 @@
   (syntax-parse stx
     [(_ ctx-id body)
      (define ctx (syntax-local-value #'ctx-id))
-     (define stops (syntax->list #'(inherit begin define-values define-syntaxes)))
-     (define ee (local-expand #'body (syntax-local-context) stops))
+     (define ee (local-expand #'body (syntax-local-context) #f))
      (syntax-parse ee
-       #:literals (inherit)
        #:literal-sets (kernel-literals)
        [(begin ~! form ...)
         #'(begin (bundle-body-wrap ctx-id form) ...)]
@@ -929,10 +933,6 @@
         (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
           ((bctx-add-seen! ctx) vars ee))
         ee]
-       [(inherit ~! var:id ...)
-        (let ([vars (syntax->list (syntax-local-introduce #'(var ...)))])
-          ((bctx-add-inh! ctx) vars ee))
-        #'(begin)]
        [_ #`(#%expression (bundle-expr-wrap ctx-id #,ee))])]))
 
 (define-syntax (bundle-expr-wrap stx)
@@ -1177,11 +1177,12 @@
   (when (eq? (syntax-local-context) 'expression)
     (raise-syntax-error #f "not allowed in expression context" stx))
   (syntax-parse stx
-    [(_ (~optional (~seq #:export (e:export-spec ...)))
+    [(_ (~optional (~seq #:bind (e:import-spec ...)))
         (~var b (expr/c #'bundle?)) ...)
-     (define eti+ie-list (check-impexps (datum (~? (e.ast ...) ())) #f stx "exports"))
-     (define/with-syntax ((eti eprefix evnames eostx) ...)
-       (map ti+ie-extract eti+ie-list))
+     (define eies (elaborate-impexps (datum (~? (e.ast ...) ())) "bindings"))
+     (check-impexps-for-collisions eies)
+     (define/with-syntax ((eti eprefix evnames eostx _) ...)
+       (map impexp-extract eies))
      #'(begin
          (define linkage
            (invoke-bundles* 'define/invoke-bundles (list eti ...) (list b.c ...)))
