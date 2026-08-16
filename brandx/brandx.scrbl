@@ -1,6 +1,6 @@
 #lang scribble/manual
 @(require scribble/example
-          (for-label racket/base racket/match racket/math
+          (for-label racket/base racket/match racket/math racket/struct-info
                      racket/contract brandx)
           (for-label (only-in racket/class
                               this abstract augment inner override ->m)))
@@ -544,6 +544,20 @@ those of its super-interfaces).
 }
 }
 
+@; ----------------------------------------
+@section[#:tag "struct-abbrev"]{Struct Abbreviations}
+
+@defform[(define-struct-abbrevs struct-id)]{
+
+Defines abbreviations for the accessors and mutators of the struct type named
+by @racket[struct-id]. Relies on @racket[struct-id] being bound to
+compile-time information satisfying @racket[struct-info?] and
+@racket[struct-field-info?]. Aliases are also defined for accessors and
+mutators from super-struct types.
+
+For each field @svar[x], an alias named @svar[.x] is defined for the accessor,
+and an alias named @svar[.x-set!] is defined for the mutator if it exists.
+}
 
 @; ----------------------------------------
 @(close-eval the-eval)
