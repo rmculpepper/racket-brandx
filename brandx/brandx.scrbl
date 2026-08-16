@@ -1,9 +1,9 @@
 #lang scribble/manual
 @(require scribble/example
           (for-label racket/base racket/match racket/math
-                     racket/contract/base brandx)
+                     racket/contract brandx)
           (for-label (only-in racket/class
-                              this abstract augment inner override)))
+                              this abstract augment inner override ->m)))
 @(begin
   (define the-eval (make-base-eval))
   (the-eval '(require racket/match racket/math racket/contract/base brandx)))
@@ -22,39 +22,34 @@ of @racketmodname[racket/unit].
 @; ============================================================
 @section{Introduction}
 
+First we define a @racket[shape] interface with two shape-related
+members. Defining the interface defines a predicate @racket[shape?] and
+generic functions for @racket[contains?] and @racket[area].
 
-
-@examples[#:eval the-eval #:label #f
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface shape
   ([contains? (-> shape? real? real? boolean?)]
    [area (-> shape? (>=/c 0))]))
 ]
 
-@examples[#:eval the-eval #:label #f
-(struct circle (xc yc r)
+Contracts are optional, but if present they should be ordinary function
+contracts (do not use @racket[->m]). Contracts do not affect dispatch; this
+library's generic functions always dispatch on the first positional argument,
+so the first argument contract should generally be the interface predicate.
+
+The interface is implemented by attaching methods to a struct declaration
+using @racket[#:properties] and the @racket[method-properties] form.  The
+@racket[#:export] clause declares the interfaces being implemented. The
+@racket[#:all] option requires that every interface member has a corresponding
+method definition. The @racket[#:prefix %] option indicates that the method
+implementations are named by prefixing the interface member name with
+@racket[%]; this avoids shadowing the generic functions.
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct rectangle (x1 y1 x2 y2) (code:comment "x1 <= x2, y1 <= y2")
   #:properties
   (method-properties
-   #:export ([shape #:prefix %])
-
-   (define (%area self)
-     (define r (circle-r self))
-     (* pi r r))
-
-   (define (%contains? self x y)
-     (<= (dist-from-center self x y) (circle-r self)))
-
-   (define (dist-from-center self x y)
-     (match-define (circle xc yc _) self)
-     (sqrt (+ (sqr (- x xc)) (sqr (- y yc)))))
-   ))
-]
-
-@examples[#:eval the-eval #:label #f
-(struct rectangle (x1 y1 x2 y2)
-  (code:comment "x1 <= x2, y1 <= y2")
-  #:properties
-  (method-properties
-   #:export ([shape #:prefix %])
+   #:export ([shape #:all #:prefix %])
 
    (define (%area self)
      (match-define (rectangle x1 y1 x2 y2) self)
@@ -66,7 +61,83 @@ of @racketmodname[racket/unit].
    ))
 ]
 
+Note that each method has an explicit @racket[self] argument. The argument
+name does not matter; the name @racket[self] is just a convention. Unlike a
+@racket[class] method, there is no special treatment of @racket[self], and
+there is no automatic access to object fields.
+
+Calling the generic function on a @racket[rectangle] instance dispatches to
+the @racket[rectangle] method:
+
 @examples[#:eval the-eval #:label #f
+(contains? (rectangle 0 0 10 20) 5 12)
+(area (rectangle 1 2 11 22))
+]
+
+The interface contracts protect the generic functions from misuse:
+
+@examples[#:eval the-eval #:label #f
+(eval:error (contains? (rectangle 0 0 10 20) 0 'center))
+]
+
+The interface contracts also protect callers from improper
+implementations. For example, the @racket[rectangle] struct type does not
+enforce the constraint @racket[(<= x1 x2)], so if we construct a ``bad''
+rectangle and ask its area, we get a contract error blaming the method
+implementation:
+
+@examples[#:eval the-eval #:label #f
+(eval:error (area (rectangle 5 0 0 10)))
+]
+
+Here is another @racket[shape] implementation:
+
+@; FIXME/TODO: use define-struct-abbrevs
+
+@examples[#:eval the-eval #:label #f
+(struct circle (xc yc r)
+  #:properties
+  (method-properties
+   #:export ([shape #:all #:prefix %])
+   (define-struct-abbrevs circle)
+
+   (define (%area self)
+     (* pi (sqr (.r self))))
+
+   (define (%contains? self x y)
+     (<= (dist-from-center self x y) (.r self)))
+
+   (define (dist-from-center self x y)
+     (dist (.xc self) x (.yc self) y))
+
+   (define (dist x1 y1 x2 y2)
+     (sqrt (+ (sqr (- x2 x1)) (sqr (- y2 y1)))))
+   ))
+]
+
+This implementation uses @racket[define-struct-abbrevs] to make field access
+more convenient, by defining @racket[.xc] as an alias of @racket[circle-xc],
+and so on. This example also shows the use of helper functions,
+@racket[dist-from-center] and @racket[dist]. The @racket[dist] function could
+just as well have been defined outside of the @racket[method-properties] body;
+the @racket[dist-from-center] function could be moved outside also, but then
+it would be outside the scope of the @racket[define-struct-abbrevs] aliases,
+so it would need to be adjusted.
+
+Since the helper functions are not interface members, they can be named nearly
+anything, @emph{except} that the export prefix declaration reserves all names
+starting with @racket[%] for exports. The restriction affects all names
+defined immediately within the methods block. So for example, if @racket[dist]
+were renamed to @racket[%dist], a syntax error would be raised.
+
+@examples[#:eval the-eval #:label #f
+(contains? (circle 0 0 10) 3 4)
+(area (circle 0 0 1))
+]
+
+Here is one more @racket[shape] implementation:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (struct union (s1 s2)
   #:properties
   (method-properties
@@ -78,12 +149,58 @@ of @racketmodname[racket/unit].
    ))
 ]
 
+It is difficult to calculate the area of overlapping shapes, and it is
+impossible to reliably detect overlap using only the members of the
+@racket[shape] interface anyway. So @racket[union] is a @emph{partial}
+implementation of the @racket[shape] interface; it does not define a
+@racket[area] method. Note the absence of the @racket[#:all] export option; if
+it were present, a syntax error would raised because of the missing
+definition. To enforce that @racket[area] is the only missing definition, an
+``except'' clause, @racket[#:except (area)], could be used instead.
+
+A @racket[union] instance is considered a @racket[shape], and it works as
+expected with the @racket[contains?] generic:
+
 @examples[#:eval the-eval #:label #f
-(contains? (circle 0 0 10) 3 4)
-(area (rectangle 1 2 11 22))
-(eval:error (area 'line))
-(eval:error (area (rectangle 1 2 0 10)))
+(shape? (union (circle 0 0 1) (rectangle 0 0 1 1)))
+(contains? (union (circle 0 0 1) (rectangle 0 0 1 1)) 1/2 1/2)
 ]
+
+A call to the @racket[area] generic gets the method from @racket[union]'s
+``super-implementation'', which is the @racket[shape] interface's
+fallbacks. Every interface member has a default fallback implementation which
+is a procedure that raises an ``unimplemented'' error:
+
+@examples[#:eval the-eval #:label #f
+(eval:error (area (union (circle 0 0 1) (rectangle 0 0 1 1))))
+]
+
+We can further ``subclass'' the @racket[union] shape with a type that we
+promise to use only if we know through other means that the shapes are
+disjoint:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct disjoint-union union ()
+  (code:comment "sub-shapes must be disjoint; not checked!")
+  #:properties
+  (method-properties
+   #:export ([shape #:except (contains?) #:prefix %])
+   (define-struct-abbrevs disjoint-union)
+
+   (define (%area self)
+     (+ (area (.s1 self)) (area (.s2 self))))
+   ))
+]
+
+Then calls to @racket[contains?] inherit the method from @racket[union] and
+calls to @racket[area] get the new implementation:
+
+@examples[#:eval the-eval #:label #f
+(contains? (disjoint-union (rectangle 0 0 1 1) (rectangle 1 1 2 2)) 1/2 1/2)
+(area (disjoint-union (rectangle 0 0 1 1) (rectangle 1 1 2 2)))
+]
+
+
 
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
@@ -128,7 +245,7 @@ of @racketmodname[racket/unit].
 (define traversal@
   (bundle
    #:export ([traversal #:prefix %])
-   #:import (worklist)
+   #:import ([worklist])
 
    (define (%traverse v get-next)
      (define q (enqueue empty v))
@@ -150,8 +267,8 @@ of @racketmodname[racket/unit].
         [(even? n) (list half)]
         [else (list half (add1 half))]))
 
-(define/invoke-bundles #:export ([traversal #:prefix bfs:]) queue@ traversal@)
-(define/invoke-bundles #:export ([traversal #:prefix dfs:]) stack@ traversal@)
+(define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
+(define/invoke-bundles #:bind ([traversal #:prefix dfs:]) stack@ traversal@)
 
 (bfs:traverse 100 halfsies)
 (dfs:traverse 100 halfsies)
@@ -313,12 +430,13 @@ Returns @racket[#t] if @racket[v] is a bundle, @racket[#f] otherwise.
          ([link-clause (code:line #:export (export-spec ...))
                        (code:line #:import (import-spec ...))
                        (code:line #:link bundle-list-expr)]
-          [export-spec interface-id
-                       [interface-id maybe-tag maybe-prefix]]
-          [import-spec interface-id
-                       [interface-id maybe-tag/super maybe-prefix]]
+          [export-spec [interface-id maybe-tag maybe-complete maybe-prefix]]
+          [import-spec [interface-id maybe-tag/super maybe-prefix]]
           [maybe-tag (code:line)
                      (code:line #:tag (id ...))]
+          [maybe-complete (code:line)
+                          (code:line #:all)
+                          (code:line #:except (member-id ...))]
           [maybe-tag/super maybe-tag
                            (code:line #:super)]
           [maybe-prefix (code:line)
@@ -328,10 +446,20 @@ Produces a @tech{bundle} with the given exports, imports, linked bundles, and
 definitions.
 
 The @racket[#:export] clause declares what the bundle implements. An export
-consists of an interface name, an optional tag, and an optional prefix. The
-export is satisfied by definitions in the bundle's body matching the names of
-the interface members, prefixed by the export prefix, if given. An export of
-an interface also includes all of its super-interfaces.
+consists of an interface name, an optional tag, an optional except-list, and
+an optional prefix. The export is satisfied by definitions in the bundle's
+body matching the names of the interface members, prefixed by the export
+prefix, if given. An export of an interface also includes all of its
+super-interfaces. An exported name that has no definition in the body retains
+the value from the super struct type, if applicable, or the interface's
+fallback implementation, otherwise.
+
+If an export contains an @racket[#:all] or @racket[#:except] clause, it
+triggers a completeness check for the exported interface. If an
+@racket[#:except] clause is present, then the body must contain a definition
+for every member except those listed. An @racket[#:all] clause is equivalent
+to @racket[#:except ()]. If neither is present, then no completeness check is
+done.
 
 If an export contains a non-empty prefix, then any definition in the bundle
 body of a name matching that prefix (and set of scopes) must correspond to an
@@ -393,12 +521,13 @@ Equivalent to @racketblock[
 (bundles->properties (bundle link-clause ... definition-or-expression ...))
 ]}
 
-@defform[(define/invoke-bundles #:export (export-spec ...) bundle-expr ...)]{
+@defform[(define/invoke-bundles #:bind (import-spec ...) bundle-expr ...)]{
 
 Links the bundles @racket[(list bundle-expr ...)], invokes them, and defines
-names according to the @racket[export-spec]s.
+names according to the @racket[import-spec]s.
 }
 
+@;{
 @defproc[(dynamic-invoke-bundles [b bundle?] ...
                                  [#:bind binds (listof tagged-interface/c)]
                                  [#:flatten? flatten? boolean? #t])
@@ -413,7 +542,7 @@ the interfaces in @racket[binds] to their corresponding values. If
 interface in @racket[binds] to a hash for that interface's names (including
 those of its super-interfaces).
 }
-
+}
 
 
 @; ----------------------------------------
