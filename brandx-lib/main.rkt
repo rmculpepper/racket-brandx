@@ -664,10 +664,6 @@
 
   (define-syntax-class export-spec
     #:attributes (ast)
-    (pattern ifc:interface-ref
-             #:attr ast
-             (let ([prefix (format-id #'ifc "")])
-               (impexp this-syntax (datum ifc.value) '() prefix #f)))
     (pattern [ifc:interface-ref
               (~alt
                (~optional (~seq #:tag (tagp:id ...))
@@ -697,10 +693,6 @@
 
   (define-syntax-class import-spec
     #:attributes (ast)
-    (pattern ifc:interface-ref
-             #:attr ast
-             (let ([prefix (format-id #'ifc "")])
-               (impexp this-syntax (datum ifc.value) '() prefix #f)))
     (pattern [ifc:interface-ref
               (~alt
                (~optional t:import-tag-clause
