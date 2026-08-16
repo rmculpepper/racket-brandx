@@ -38,7 +38,8 @@
          bundles->properties
          method-properties
          define/invoke-bundles
-         dynamic-invoke-bundles)
+         dynamic-invoke-bundles
+         define-struct-abbrevs)
 
 (module util racket/base
   (require racket/match racket/list)
@@ -1243,3 +1244,50 @@
                    [vvalue (in-list vvalues)])
           (hash-set vh vname vvalue))))
     (hash-set tih bind vh)))
+
+
+;; ============================================================
+
+(define-syntax (define-struct-abbrevs stx)
+  (syntax-case stx ()
+    [(_ sname)
+     (with-disappeared-uses
+       (define (bad-sname)
+         (raise-syntax-error #f "named defined as struct type" stx))
+       (unless (identifier? #'sname) (bad-sname))
+       (define info (syntax-local-value/record #'sname struct-info?))
+       (unless info (bad-sname))
+       (define infolist (extract-struct-info info))
+       (define accessors (list-ref infolist 3))
+       (define mutators (list-ref infolist 4))
+       (define fields
+         (let loop ([info info] [infolist infolist])
+           (cond [(struct-field-info? info)
+                  (define immediate-fields
+                    (struct-field-info-list info))
+                  (define super-name
+                    (list-ref infolist 5))
+                  (define super-info
+                    (and (identifier? super-name)
+                         (syntax-local-value super-name)))
+                  (define super-infolist
+                    (and super-info (extract-struct-info super-info)))
+                  (append immediate-fields
+                          (loop super-info super-infolist))]
+                 [else null])))
+       (define/with-syntax ((getter accessor) ...)
+         (for/list ([accessor (in-list accessors)]
+                    [field (in-list fields)]
+                    #:when (identifier? accessor))
+           (list (format-id stx ".~a" field) accessor)))
+       (define/with-syntax ((setter mutator) ...)
+         (for/list ([mutator (in-list mutators)]
+                    [field (in-list fields)]
+                    #:when (identifier? mutator))
+           (list (format-id stx ".~a-set!" field) mutator)))
+       #'(begin (define-syntax getter
+                  (make-rename-transformer (quote-syntax accessor)))
+                ...
+                (define-syntax setter
+                  (make-rename-transformer (quote-syntax mutator)))
+                ...))]))
