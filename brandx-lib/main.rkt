@@ -38,7 +38,6 @@
          bundles->properties
          method-properties
          define/invoke-bundles
-         dynamic-invoke-bundles
          define-struct-abbrevs)
 
 (module util racket/base
