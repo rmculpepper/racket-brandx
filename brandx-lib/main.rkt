@@ -27,6 +27,7 @@
          racket/contract
          racket/contract/collapsible
          racket/list
+         racket/vector
          racket/match)
 (provide define-interface
          interface?
@@ -112,6 +113,23 @@
 ;; Opaque wrapper for struct type property values.
 (struct prop-val-wrapper (v))
 
+;; ----------------------------------------
+;; Ancestry
+
+;; Ancestry = (vector Any ...), where if any two ancestries match at
+;; index k, they also match at every index less than k.
+
+(define empty-ancestry (vector-immutable))
+
+(define (ancestor? a1 a2)
+  (define n (vector-length a1))
+  (and (>= (vector-length a2) n)
+       (eq? (vector-ref a1 (sub1 n)) (vector-ref a2 (sub1 n)))))
+
+(define (ancestry-extend anc [last-v (box 0)])
+  (vector->immutable-vector
+   (vector-extend anc (add1 (vector-length anc)) last-v)))
+
 ;; ============================================================
 ;; Interfaces
 
@@ -128,9 +146,9 @@
    in-ctcv      ;; (Vectorof (Any Party Location -> Any)) -- used to check impls
    out-ctcv     ;; (Vectorof (Any Party Location -> Any))
    fallbacks    ;; VarHash
-   vprop        ;; (StructTypeProperty #:in (StructType -> VarHash) #:out VarVector)
+   vprop        ;; (StructTypeProperty #:in (StructType -> VarHash) #:out VTable)
    vprop?       ;; (Any -> Boolean)
-   vprop-ref    ;; (vprop? -> VarVector)
+   vprop-ref    ;; (vprop? -> VTable)
    )
   #:property prop:custom-write
   (lambda (self out mode)
@@ -140,7 +158,10 @@
 
 ;; InterfaceKey = Symbol, unique to interface (not interned)
 ;; VarHash = (Hasheq Symbol Value)
-;; VarVector = (vector VarHash Value ...)
+;; VTable = (vector VarHash Ancestry Value ...)
+(define (vtable-vh vv) (vector-ref vv 0))
+(define (vtable-ancestry vv) (vector-ref vv 1))
+(define VSTART 2)
 
 ;; rtifs-closure : (Listof RtInterface) -> (Listof RtInterface)
 (define (rtifs-closure ifcs)
@@ -177,10 +198,17 @@
     (match-define (prop-val-wrapper initializer) in-val)
     (define super-stype (list-ref st-info 6))
     (define vh (initializer super-stype))
-    (apply vector-immutable vh
+    (define super-anc
+      (if (vprop? super-stype)
+          (vtable-ancestry (vprop-ref super-stype))
+          empty-ancestry))
+    (apply vector-immutable vh (ancestry-extend super-anc)
            (for/list ([vname (in-list vnames)])
              (hash-ref vh vname))))
-  (make-struct-type-property iname vprop-guard derives))
+  (define-values (vprop vprop? vprop-ref)
+    ;; workaround for racket/racket#5562
+    ((values make-struct-type-property) iname vprop-guard derives))
+  (values vprop vprop? vprop-ref))
 
 (define (rtif-apply-out-ctcs ifc vs bnames neg-party loc)
   (define out-ctcv (rtif-out-ctcv ifc))
@@ -199,7 +227,7 @@
 (define (rtif-get-stype-vh ifc stype)
   (define vprop? (rtif-vprop? ifc))
   (define vprop-ref (rtif-vprop-ref ifc))
-  (cond [(vprop? stype) (vector-ref (vprop-ref stype) 0)]
+  (cond [(vprop? stype) (vtable-vh (vprop-ref stype))]
         [else (rtif-fallbacks ifc)]))
 
 (struct unimplemented (iname vname)
@@ -233,7 +261,7 @@
           (lambda (v)
             (and (vprop? v)
                  (or stype-ok? (not (struct-type? v)))
-                 (let ([vh (vector-ref (dvprop-ref v) 0)])
+                 (let ([vh (vtable-vh (dvprop-ref v))])
                    (not (unimplemented? (hash-ref vh vname #f))))))
           predicate-name)]
         [else
@@ -495,7 +523,7 @@
 (define (make-generic* ifc seek-name name ctc?)
   (let loop ([ifc ifc])
     (or (for/first ([vname (in-list (rtif-vnames ifc))]
-                    [index (in-naturals 1)]
+                    [index (in-naturals VSTART)]
                     [staged-out-ctc (in-vector (rtif-out-ctcv ifc))]
                     #:when (eq? vname seek-name))
           (define iname (rtif-name ifc))
