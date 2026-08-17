@@ -473,23 +473,22 @@
     [(_ iname:interface-ref ((ctc? gname vname) ...))
      (define ifc (datum iname.value))
      (define ctc?s (syntax->datum #'(ctc? ...)))
-     (define in-mod? (eq? (syntax-local-context) 'module))
      (define/with-syntax rtname (ctif-rt ifc))
      (define/with-syntax (uname ...) ;; unprotected
        (generate-temporaries #'(gname ...)))
      (define/with-syntax (bname ...)
        (for/list ([gname (in-list (datum (gname ...)))])
          (format-id #f "~a (generic)" gname #:source gname)))
-     (define/with-syntax (lname ...) ;; w/ staged out-contracts
-       (generate-temporaries #'(gname ...)))
-     (define/with-syntax (mname ...) ;; w/ module-boundary contracts
-       (generate-temporaries #'(gname ...)))
-     (define/with-syntax (quoted-mname-if-defined ...)
-       (for/list ([mname (in-list (datum (mname ...)))]
-                  [ctc? (in-list ctc?s)])
-         (if (and in-mod? ctc?) #`(quote-syntax #,mname) #'(quote #f))))
-     (define/with-syntax (mbc-def ...)
-       (cond [in-mod?
+     (cond [(eq? (syntax-local-context) 'module)
+            (define/with-syntax (lname ...) ;; w/ staged out-contracts
+              (generate-temporaries #'(gname ...)))
+            (define/with-syntax (mname ...) ;; w/ module-boundary contracts
+              (generate-temporaries #'(gname ...)))
+            (define/with-syntax (quoted-mname-if-defined ...)
+              (for/list ([mname (in-list (datum (mname ...)))]
+                         [ctc? (in-list ctc?s)])
+                (if ctc? #`(quote-syntax #,mname) #'(quote #f))))
+            (define/with-syntax (mbc-def ...)
               ;; defined name must not be used within defining module because
               ;; support might not be initialized yet; see generic-transformer
               (for/list ([index (in-naturals 0)]
@@ -502,24 +501,34 @@
                   #'(define-module-boundary-contract mname
                       uname (vector-ref (rtif-ctcv rtname) (quote index))
                       #:name-for-blame bname
-                      #:pos-source (quote (interface iname)))))]
-             [else null]))
-     #'(begin
-         (define uname
-           (make-generic* rtname (quote vname) (quote gname) #f))
-         ...
-         (define-values (lname ...)
-           (apply values
-                  (rtif-apply-out-ctcs rtname (list uname ...) (quote (bname ...))
-                                       (current-contract-region) #f)))
-         mbc-def
-         ...
-         (define-syntax gname
-           (generic-transformer
-            #'uname
-            (quote-syntax lname)
-            quoted-mname-if-defined))
-         ...)]))
+                      #:pos-source (quote (interface iname))))))
+            #'(begin
+                (define uname
+                  (make-generic* rtname (quote vname) (quote gname) #f))
+                ...
+                (define-values (lname ...)
+                  (apply values
+                         (rtif-apply-out-ctcs rtname (list uname ...) (quote (bname ...))
+                                              (current-contract-region) #f)))
+                mbc-def
+                ...
+                (define-syntax gname
+                  (generic-transformer
+                   #'uname
+                   (quote-syntax lname)
+                   quoted-mname-if-defined))
+                ...)]
+           [else
+            ;; to make things "work" better at top-level, define gnames as
+            ;; ordinary variables
+            #'(begin
+                (define uname
+                  (make-generic* rtname (quote vname) (quote gname) #f))
+                ...
+                (define-values (gname ...)
+                  (apply values
+                         (rtif-apply-out-ctcs rtname (list uname ...) (quote (bname ...))
+                                              (current-contract-region) #f))))])]))
 
 (begin-for-syntax
   ;; (generic-transformer Id (U Id #f) (U Id #f))
