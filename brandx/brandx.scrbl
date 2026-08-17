@@ -6,7 +6,7 @@
                               this abstract augment inner override ->m)))
 @(begin
   (define the-eval (make-base-eval))
-  (the-eval '(require racket/match racket/math racket/contract/base brandx)))
+  (the-eval '(require racket/match racket/math racket/contract brandx)))
 
 @; ----------------------------------------
 @title[#:tag "brandx"]{BrandX: Generics, Interfaces, and Components}
@@ -199,6 +199,137 @@ calls to @racket[area] get the new implementation:
 (contains? (disjoint-union (rectangle 0 0 1 1) (rectangle 1 1 2 2)) 1/2 1/2)
 (area (disjoint-union (rectangle 0 0 1 1) (rectangle 1 1 2 2)))
 ]
+
+@; ----------------------------------------
+@subsection[#:tag "intro2"]{Multiple Interfaces and Instance Contracts}
+
+This section illustrates additional features and patterns: multiple interface
+exports and instance contracts.
+
+We'll use two behaviors of animals for this example, making noise and
+eating. We define separate interfaces, one for each kind of behavior. The
+@racket[can-greet] interface is simple:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(define-interface can-greet
+  ([greet (-> can-greet? string?)]))
+]
+
+The interface for eating is more complicated. Different animals eat different
+kinds of foods, and it is wrong to feed them food that they cannot eat. One
+way to represent this is to have each animal (type or instance) carry a
+contract that describes allowable food. Then the @racket[eat] operation is
+described by a dependent contract:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(define-interface can-eat
+  ([food/c (-> can-eat? contract?)]
+   [eat (->i ([self can-eat?] [food (self) (food/c self)])
+             [_ void?])]))
+]
+
+A dog can both make noise and eat:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct dog ([weight #:mutable] [happiness #:mutable])
+  #:transparent
+  #:properties
+  (method-properties
+   #:export ([can-greet #:all #:prefix %]
+             [can-eat #:all #:prefix %])
+   (define-struct-abbrevs dog)
+   (define (%greet self) (if (>= (.weight self) 10) "woof" "bark"))
+   (define (%food/c self) (or/c 'dog-food 'cheese 'treat))
+   (define (%eat self food)
+     (case food
+       [(treat) (.happiness-set! self (add1 (.happiness self)))]
+       [else (.weight-set! self (add1 (.weight self)))]))))
+]
+
+Note that multiple exports may use the same export prefix.
+
+@examples[#:eval the-eval #:label #f
+(define barkly (dog 8 5))
+(greet barkly)
+(eat barkly 'dog-food)
+(eat barkly 'cheese)
+(eat barkly 'treat)
+barkly
+(greet barkly)
+(eval:error (eat barkly 'lettuce))
+]
+
+@section[#:tag "intro3"]{Super Calls and Mixins}
+
+A loud dog makes three times as much noise as a regular dog. We can define a
+@racket[loud-dog] struct type that overrides the @racket[greet] method and
+calls the super-implementation (the method from @racket[dog]) as a helper. To
+get access to super-implementations, we use an @racket[#:import] clause with
+the @racket[#:super] tag.
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct loud-dog dog ()
+  #:properties
+  (method-properties
+   #:export ([can-greet #:all #:prefix %])
+   #:import ([can-greet #:super])
+   (define (%greet self)
+     (define greeting (super-greet self))
+     (string-append greeting " " greeting " " greeting))))
+]
+
+Here is a loud dog at work:
+
+@examples[#:eval the-eval #:label #f
+(define princess (loud-dog 2 1))
+(greet princess)
+(eat princess 'treat)
+]
+
+Notice, however, that the implementation of loudness had nothing to do with
+the @racket[dog] or @racket[loud-dog] struct. We can extract the ``loudness''
+behavior into a separate bundle (similar to a mixin in
+@racketmodname[racket/class]):
+
+@examples[#:eval the-eval #:label #f
+(define loud@
+  (bundle
+   #:export ([can-greet #:all #:prefix %])
+   #:import ([can-greet #:super])
+   (define (%greet self)
+     (define greeting (super-greet self))
+     (string-append greeting " " greeting " " greeting))))
+]
+
+Then if we have another kind of animal...
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct cat ()
+  #:properties
+  (method-properties
+   #:export ([can-greet #:all #:prefix %]
+             [can-eat #:all #:prefix %])
+   (define (%greet self) "meow")
+   (define (%food/c self) (or/c 'cat-food 'fish 'bird 'mouse))
+   (define (%eat self food) (void))))
+]
+
+we can make a loud version by simply linking in the @racket[loud@] mixin
+bundle:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(struct loud-cat cat ()
+  #:properties
+  (method-properties
+   #:link (list loud@)))
+]
+
+Here is a loud cat at work:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(greet (loud-cat))
+]
+
 
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
