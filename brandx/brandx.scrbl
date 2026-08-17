@@ -3,7 +3,7 @@
           (for-label racket/base racket/match racket/math racket/struct-info
                      racket/contract brandx
                      (only-in racket/class
-                              this abstract augment inner override ->m)
+                              class this abstract augment inner override ->m)
                      (only-in racket/generic
                               redirect-generics)))
 @(begin
@@ -15,18 +15,22 @@
 
 @defmodule[brandx]
 
-This library, @racketmodname[brandx], is another library for @bold{generics}
-in Racket. It provides features similar to @racketmodname[racket/generic] and
-@racketmodname[racket/class], but it does not interoperate with either. It can
-also replace simple uses of @racketmodname[racket/unit]. See also
-@secref["comparison"].
+This library supports interface-oriented programming in Racket via
+@bold{generic} functions. It provides features similar to
+@racketmodname[racket/generic] and @racketmodname[racket/class], and it can
+also replace simple uses of @racketmodname[racket/unit], but it does not
+interoperate with any of those libraries. See also @secref["comparison"].
 
 @; ============================================================
 @section{Introduction}
 
-First we define a @racket[shape] interface with two shape-related
-members. Defining the interface defines a predicate @racket[shape?] and
-generic functions for @racket[contains?] and @racket[area].
+This section introduces @racketmodname[brandx] interfaces, generic functions,
+and their implementations as methods associated with @racket[struct]
+declarations. The first example uses the domain of simple geometric shapes.
+
+First we define a @racket[shape] interface with two members. Defining the
+interface also defines a predicate @racket[shape?] and a generic function for
+each interface member: @racket[contains?] and @racket[area].
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface shape
@@ -35,19 +39,20 @@ generic functions for @racket[contains?] and @racket[area].
 ]
 
 Contracts are optional, but if present they should be ordinary function
-contracts (do not use @racket[->m]). Contracts do not affect dispatch; this
-library's generic functions always dispatch on the first positional argument,
-so the first argument contract should generally be the interface predicate.
+contracts (use @racket[->], @racket[->*], etc; do not use
+@racket[->m]). Contracts do not affect dispatch; this library's generic
+functions always dispatch on the first positional argument, so the first
+argument contract should generally be the interface predicate.
 
-The interface is implemented by attaching methods to a struct declaration
-using @racket[#:properties] and the @racket[method-properties] form.  The
-@racket[#:export] clause declares the interfaces being implemented. The
-@racket[#:all] option requires that every interface member has a corresponding
-method definition. The @racket[#:prefix %] option indicates that the method
+The interface is implemented by attaching methods to a @racket[struct]
+declaration using @racket[#:properties] and the @racket[method-properties]
+form. The @racket[#:export] clause declares the interfaces being
+implemented---just one, @racket[shape]. Within the export, the @racket[#:all]
+option requires that every interface member has a corresponding method
+definition, and the @racket[#:prefix %] option indicates that the method
 implementations are named by prefixing the interface member name with
-@racket[%]; this avoids shadowing the generic functions. (It is almost always
-a mistake to call or otherwise refer to an export-prefixed name; use the
-generic function instead.)
+@racket[%]---this avoids shadowing the generic functions. It is almost always
+a mistake to call an export-prefixed name; use the generic function instead.
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (struct rectangle (x1 y1 x2 y2) (code:comment "x1 <= x2, y1 <= y2")
@@ -86,9 +91,8 @@ The interface contracts protect the generic functions from misuse:
 
 The interface contracts also protect callers from incorrect
 implementations. For example, the @racket[rectangle] struct type does not
-enforce the constraint @racket[(<= x1 x2)], so if we construct a ``bad''
-rectangle and ask its area, we get a contract error blaming the method
-implementation:
+enforce the constraint @racket[(<= x1 x2)], so if we construct a bad rectangle
+and ask its area, we get a contract error blaming the implementation:
 
 @examples[#:eval the-eval #:label #f
 (eval:error (area (rectangle 5 0 0 10)))
@@ -130,14 +134,18 @@ Since the helper functions are not interface members, they can be named nearly
 anything, @emph{except} that the export prefix declaration reserves all names
 starting with @racket[%] for exports. The restriction affects all names
 defined immediately within the methods block. So for example, if @racket[dist]
-were renamed to @racket[%dist], a syntax error would be raised.
+were renamed to @racket[%dist], a syntax error would be raised. (This
+restriction helps prevent typos in intended export names from silently being
+ignored.)
+
+Shape operations on circles work as expected:
 
 @examples[#:eval the-eval #:label #f
 (contains? (circle 0 0 10) 3 4)
 (area (circle 0 0 1))
 ]
 
-Here is one more @racket[shape] implementation:
+Here is another @racket[shape] implementation:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (struct union (s1 s2)
@@ -154,8 +162,8 @@ Here is one more @racket[shape] implementation:
 It is difficult to calculate the area of overlapping shapes, and it is
 impossible to reliably detect overlap using only the members of the
 @racket[shape] interface anyway. So @racket[union] is a @emph{partial}
-implementation of the @racket[shape] interface; it does not define a
-@racket[area] method. Note the absence of the @racket[#:all] export option; if
+implementation of the @racket[shape] interface: it does not define a
+@racket[area] method. Note the absence of the @racket[#:all] export option. If
 it were present, a syntax error would raised because of the missing
 definition. To enforce that @racket[area] is the only missing definition, an
 ``except'' clause, @racket[#:except (area)], could be used instead.
@@ -168,10 +176,10 @@ expected with the @racket[contains?] generic:
 (contains? (union (circle 0 0 1) (rectangle 0 0 1 1)) 1/2 1/2)
 ]
 
-A call to the @racket[area] generic gets the method from @racket[union]'s
-``super-implementation'', which is the @racket[shape] interface's
-fallbacks. Every interface member has a default fallback implementation which
-is a procedure that raises an ``unimplemented'' error:
+A call to the @racket[area] generic function gets the method from
+@racket[union]'s ``super-implementation'', which is the @racket[shape]
+interface's fallbacks. Every interface member has a default fallback
+implementation which is a procedure that raises an ``unimplemented'' error:
 
 @examples[#:eval the-eval #:label #f
 (eval:error (area (union (circle 0 0 1) (rectangle 0 0 1 1))))
@@ -205,12 +213,11 @@ calls to @racket[area] get the new implementation:
 @; ----------------------------------------
 @subsection[#:tag "intro2"]{Multiple Interfaces and Instance Contracts}
 
-This section illustrates additional features and patterns: multiple interface
-exports and instance contracts.
-
-We'll use two behaviors of animals for this example, making noise and
-eating. We define separate interfaces, one for each kind of behavior. The
-@racket[can-greet] interface is simple:
+This section illustrates additional features and patterns---multiple interface
+exports and instance contracts---using an example based on animals. We'll use
+two behaviors of animals for this example, making noise and eating. Rather
+than defining a single interface, let's define separate interfaces, one for
+each kind of behavior. The @racket[can-greet] interface is simple:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface can-greet
@@ -248,10 +255,11 @@ A dog can both make noise and eat:
        [else (.weight-set! self (add1 (.weight self)))]))))
 ]
 
-Note that multiple exports may use the same export prefix. Also note that in
-this case, the food contract is independent of the instance, but one could
-also have an implementation of @racket[food/c] that computes its contract from
-instance fields.
+Note that multiple exports may use the same export prefix, as above, or they
+may use different export prefixes. Also note that in this case, the food
+contract is independent of the instance, but one could also have an
+implementation of @racket[food/c] that computes its contract from instance
+fields.
 
 @examples[#:eval the-eval #:label #f
 (define barkly (dog 8 5))
@@ -294,8 +302,8 @@ Here is a loud dog at work:
 
 Notice, however, that the implementation of loudness had nothing to do with
 the @racket[dog] or @racket[loud-dog] struct type. We can extract the
-``loudness'' behavior into a separate bundle (similar to a mixin in
-@racketmodname[racket/class]):
+``loudness'' behavior into a separate bundle, similar to a mixin in
+@racketmodname[racket/class]:
 
 @examples[#:eval the-eval #:label #f
 (define loud@
