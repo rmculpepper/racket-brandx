@@ -1,9 +1,11 @@
 #lang scribble/manual
 @(require scribble/example
           (for-label racket/base racket/match racket/math racket/struct-info
-                     racket/contract brandx)
-          (for-label (only-in racket/class
-                              this abstract augment inner override ->m)))
+                     racket/contract brandx
+                     (only-in racket/class
+                              this abstract augment inner override ->m)
+                     (only-in racket/generic
+                              redirect-generics)))
 @(begin
   (define the-eval (make-base-eval))
   (the-eval '(require racket/match racket/math racket/contract brandx)))
@@ -246,7 +248,10 @@ A dog can both make noise and eat:
        [else (.weight-set! self (add1 (.weight self)))]))))
 ]
 
-Note that multiple exports may use the same export prefix.
+Note that multiple exports may use the same export prefix. Also note that in
+this case, the food contract is independent of the instance, but one could
+also have an implementation of @racket[food/c] that computes its contract from
+instance fields.
 
 @examples[#:eval the-eval #:label #f
 (define barkly (dog 8 5))
@@ -259,11 +264,12 @@ barkly
 (eval:error (eat barkly 'lettuce))
 ]
 
-@section[#:tag "intro3"]{Super Calls and Mixins}
+@; ----------------------------------------
+@subsection[#:tag "intro3"]{Super Calls and Mixins}
 
 A loud dog makes three times as much noise as a regular dog. We can define a
 @racket[loud-dog] struct type that overrides the @racket[greet] method and
-calls the super-implementation (the method from @racket[dog]) as a helper. To
+calls its super-implementation (the method from @racket[dog]) as a helper. To
 get access to super-implementations, we use an @racket[#:import] clause with
 the @racket[#:super] tag.
 
@@ -287,8 +293,8 @@ Here is a loud dog at work:
 ]
 
 Notice, however, that the implementation of loudness had nothing to do with
-the @racket[dog] or @racket[loud-dog] struct. We can extract the ``loudness''
-behavior into a separate bundle (similar to a mixin in
+the @racket[dog] or @racket[loud-dog] struct type. We can extract the
+``loudness'' behavior into a separate bundle (similar to a mixin in
 @racketmodname[racket/class]):
 
 @examples[#:eval the-eval #:label #f
@@ -329,7 +335,6 @@ Here is a loud cat at work:
 @examples[#:eval the-eval #:no-prompt #:label #f
 (greet (loud-cat))
 ]
-
 
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
@@ -462,9 +467,6 @@ search:
 (bfs:traverse 100 halfsies)
 ]
 
-
-@; FIXME/TODO: example of instance-contract workaround
-
 @; ----------------------------------------
 @subsection[#:tag "comparison"]{Comparison with Other Libraries}
 
@@ -472,13 +474,14 @@ Improvements over @racketmodname[racket/generic]: This library has better
 binding ergonomics: implementations may use export prefixes to avoid shadowing
 generic functions, and multiple interfaces may be implemented in a single
 shared definition scope. Contracts are associated with interface members, and
-interface imports and exports are contract boundaries, but there are no
-instance contracts. This library supports method overriding with calls to
-super-methods.
+interface imports and exports are contract boundaries. Calls to super-methods
+are supported. Abstraction in the style of mixins and traits is supported at
+the granularity of interfaces.
 
 Limitations compared to @racketmodname[racket/generic]: This library's generic
 functions always dispatch on their first positional argument, and they do not
-support ``defaults'' (instead, define a wrapper function).
+support ``defaults'' (instead, define a wrapper function). Method redirection
+(as with @racket[redirect-generics] etc) is not supported.
 
 Differences from @racketmodname[racket/class]: Users retain direct access to
 structs, including pattern-matching via @racket[match]. All method names to be
@@ -487,8 +490,8 @@ interface. There is no syntactic restriction or special treatment of methods;
 in particular, there is no implicit @racket[this] variable. Consequently,
 there is no syntactic support for treating fields as variables, and there is
 no special treatment of calls on the same object. There is no special
-construction/initialization support. There is no support for augmentable
-methods (@racket[augment], @racket[inner]).
+construction/initialization support. There is no support for final methods,
+@racket[abstract] methods, or @racket[augment] methods.
 
 
 @; ----------------------------------------
