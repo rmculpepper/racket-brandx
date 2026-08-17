@@ -130,14 +130,26 @@
   (vector->immutable-vector
    (vector-extend anc (add1 (vector-length anc)) last-v)))
 
-;; --
+;; ----------------------------------------
+;; Protecting super methods
 
-#|
-(define ((proxy f prop? prop-ref anc) obj . args)
-  (define obj-anc (and (prop? obj) (vtable-ancestry (prop-ref obj))))
-  (unless (and obj-anc (ancestor? anc obj-anc)) (error))
-  (apply f obj args))
-|#
+;; Importing [ifc #:super] gives access to super methods; may be misused by
+;; being applied to targets that are not instances of super struct
+;; type. Protect super vh in linkage using chaperone; unprotect using
+;; impersonator property when composing new vh to avoid unnecessary wrapping.
+
+(define-values (prop:wrapped-super wrapped-super? wrapped-super-ref)
+  (make-impersonator-property 'wrapped-super))
+
+(define (chaperone-super-vh prop? prop-ref anc vh)
+  (define wrap-method (make-chaperone-super-method prop? prop-ref anc))
+  (define (wrap-value h k v) (wrap-method v))
+  (define (wrap-ref h k) (values k wrap-value))
+  (define (wrap-set h k v) (error 'chaperone-super-vh "set not implemented"))
+  (define (wrap-remove h k) (error 'chaperone-super-vh "remove not implemented"))
+  (define (wrap-key h k) k)
+  (chaperone-hash vh wrap-ref wrap-set wrap-remove wrap-key #f #f
+                  prop:wrapped-super vh))
 
 ;; make-super-chaperone : ... -> Procedure -> Procedure
 ;; Make chaperone wrapper that checks first argument has correct ancestry.
@@ -159,22 +171,11 @@
            (error fname "bad target for super method: ~e" obj))
          (apply values kwargs obj args))
        wrapper))
-    (define-values (req-kws opt-kws) (procedure-keywords f))
-    (cond [(null? opt-kws) (chaperone-procedure f wrapper)]
-          [else (chaperone-procedure f kw-wrapper)])))
-
-(define-values (prop:wrapped-super wrapped-super? wrapped-super-ref)
-  (make-impersonator-property 'wrapped-super))
-
-(define (chaperone-super-vh prop? prop-ref anc vh)
-  (define wrap-method (make-chaperone-super-method prop? prop-ref anc))
-  (define (wrap-value h k v) (wrap-method v))
-  (define (wrap-ref h k) (values k wrap-value))
-  (define (wrap-set h k v) (error 'chaperone-super-vh "set not implemented"))
-  (define (wrap-remove h k) (error 'chaperone-super-vh "remove not implemented"))
-  (define (wrap-key h k) k)
-  (chaperone-hash vh wrap-ref wrap-set wrap-remove wrap-key #f #f
-                  prop:wrapped-super vh))
+    (cond [(procedure? f)
+           (define-values (req-kws opt-kws) (procedure-keywords f))
+           (cond [(null? opt-kws) (chaperone-procedure f wrapper)]
+                 [else (chaperone-procedure f kw-wrapper)])]
+          [else f])))
 
 ;; ============================================================
 ;; Interfaces
