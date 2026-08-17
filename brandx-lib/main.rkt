@@ -431,9 +431,9 @@
      (define/with-syntax (vname ...) #'(d.name ...))
      (define/with-syntax (ctcname ...)
        (generate-temporaries (datum (vname ...))))
-     (define/with-syntax ((early-def ...) (late-def ...) ginfo)
+     (define/with-syntax ((pre-def1 ...) (early-def ...) (late-def ...) ginfo)
        (cond [(datum no-generics?)
-              (list null null #'#f)]
+              (list null null null #'#f)]
              [else
               (define/with-syntax iname?
                 (or (datum predicate) (format-id #'iname "~a?" #'iname)))
@@ -444,14 +444,15 @@
                       [else #'(vname ...)]))
               (define/with-syntax (vctc? ...)
                 (map syntax? (datum ((~? d.ctc #f) ...))))
-              #'[[(define (iname? v) ;; define early, available for ctcs
+              #'[[(define-syntaxes (gname ...) (values))]
+                 [(define (iname? v) ;; define early, available for ctcs
                     (and (not (struct-type? v)) ((rtif-vprop? rtname) v)))]
                  [(define-interface-generics iname ((vctc? gname vname) ...))]
                  (iname? gname ...)]]))
      (define/with-syntax (pre-def ...)
        ;; fixes unbound-identifier errors when used at top level
        (cond [(eq? (syntax-local-context) 'top-level)
-              (list #'(define-syntaxes (rtname) (values)))]
+              #'[(define-syntaxes (rtname) (values)) pre-def1 ...]]
              [else null]))
      #'(begin
          pre-def ...
@@ -472,6 +473,7 @@
     [(_ iname:interface-ref ((ctc? gname vname) ...))
      (define ifc (datum iname.value))
      (define ctc?s (syntax->datum #'(ctc? ...)))
+     (define in-mod? (eq? (syntax-local-context) 'module))
      (define/with-syntax rtname (ctif-rt ifc))
      (define/with-syntax (uname ...) ;; unprotected
        (generate-temporaries #'(gname ...)))
@@ -485,9 +487,9 @@
      (define/with-syntax (quoted-mname-if-defined ...)
        (for/list ([mname (in-list (datum (mname ...)))]
                   [ctc? (in-list ctc?s)])
-         (if ctc? #`(quote-syntax #,mname) #'(quote #f))))
+         (if (and in-mod? ctc?) #`(quote-syntax #,mname) #'(quote #f))))
      (define/with-syntax (mbc-def ...)
-       (cond [(eq? (syntax-local-context) 'module)
+       (cond [in-mod?
               ;; defined name must not be used within defining module because
               ;; support might not be initialized yet; see generic-transformer
               (for/list ([index (in-naturals 0)]
