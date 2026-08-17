@@ -13,11 +13,11 @@
 
 @defmodule[brandx]
 
-This library, @racketmodname[brandx], is another library for
-@bold{generics} in Racket. It provides features similar to
-@racketmodname[racket/generic] and @racketmodname[racket/class], but
-it does not interoperate with either. It can also replace simple uses
-of @racketmodname[racket/unit].
+This library, @racketmodname[brandx], is another library for @bold{generics}
+in Racket. It provides features similar to @racketmodname[racket/generic] and
+@racketmodname[racket/class], but it does not interoperate with either. It can
+also replace simple uses of @racketmodname[racket/unit]. See also
+@secref["comparison"].
 
 @; ============================================================
 @section{Introduction}
@@ -43,7 +43,9 @@ using @racket[#:properties] and the @racket[method-properties] form.  The
 @racket[#:all] option requires that every interface member has a corresponding
 method definition. The @racket[#:prefix %] option indicates that the method
 implementations are named by prefixing the interface member name with
-@racket[%]; this avoids shadowing the generic functions.
+@racket[%]; this avoids shadowing the generic functions. (It is almost always
+a mistake to call or otherwise refer to an export-prefixed name; use the
+generic function instead.)
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (struct rectangle (x1 y1 x2 y2) (code:comment "x1 <= x2, y1 <= y2")
@@ -80,7 +82,7 @@ The interface contracts protect the generic functions from misuse:
 (eval:error (contains? (rectangle 0 0 10 20) 0 'center))
 ]
 
-The interface contracts also protect callers from improper
+The interface contracts also protect callers from incorrect
 implementations. For example, the @racket[rectangle] struct type does not
 enforce the constraint @racket[(<= x1 x2)], so if we construct a ``bad''
 rectangle and ask its area, we get a contract error blaming the method
@@ -91,8 +93,6 @@ implementation:
 ]
 
 Here is another @racket[shape] implementation:
-
-@; FIXME/TODO: use define-struct-abbrevs
 
 @examples[#:eval the-eval #:label #f
 (struct circle (xc yc r)
@@ -200,35 +200,47 @@ calls to @racket[area] get the new implementation:
 (area (disjoint-union (rectangle 0 0 1 1) (rectangle 1 1 2 2)))
 ]
 
-
-
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
 
-@examples[#:eval the-eval #:label #f
+This section provides an example of using interfaces and bundles for component
+programming.
+
+Interfaces intended for use with components should use the
+@racket[#:no-generics] option, which omits the definition of the interface
+predicate and generic functions. The following is an interface for a worklist
+component:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface worklist
   ([empty any/c]
    [empty? (-> any/c boolean?)]
    [enqueue (-> any/c any/c any/c)]
    [dequeue (-> any/c (values any/c any/c))])
   #:no-generics)
+]
 
-(define queue@
-  (bundle
-   #:export ([worklist #:prefix %])
-   (struct queue (r w))
-   (define %empty (queue null null))
-   (define (%empty? q)
-     (match q [(queue '() '()) #t] [_ #f]))
-   (define (%enqueue q v)
-     (match q
-       [(queue r w) (queue r (cons v w))]))
-   (define (%dequeue q)
-     (match q
-       [(queue (cons v r) w) (values v (queue r w))]
-       [(queue '() '()) (error 'remove "empty queue")]
-       [(queue '() w) (%dequeue (queue (reverse w) '()))]))))
+It would be appealing to have the worklist signature contain a predicate or
+contract for the component's worklist representation, like so:
 
+@racketblock[
+(code:comment "NOT SUPPORTED")
+(define-interface worklist
+  ([worklist/c contract?]
+   [empty worklist/c]
+   [empty? (-> worklist/c boolean?)]
+   [enqueue (-> worklist/c any/c worklist/c)]
+   [dequeue (-> worklist/c (values any/c worklist/c))])
+  #:no-generics)
+]
+
+But alas, this library does not allow interface contracts to depend on
+interface members.
+
+The following stack component is one implementation of the @racket[worklist]
+signature:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define stack@
   (bundle
    #:export ([worklist #:prefix %])
@@ -237,11 +249,22 @@ calls to @racket[area] get the new implementation:
    (define (%enqueue st v) (cons v st))
    (define (%dequeue st)
      (match st [(cons v st) (values v st)]))))
+]
 
+The @racket[traversal] interface has a single member, @racket[traverse], which
+takes an initial value and a successors function, and collects all of the
+values reachabled from the initial value into a list.
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface traversal
   ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))])
   #:no-generics)
+]
 
+Here is an implementation of the traversal component that does no
+cycle detection. It uses the worklist component to manage its state.
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define traversal@
   (bundle
    #:export ([traversal #:prefix %])
@@ -260,20 +283,56 @@ calls to @racket[area] get the new implementation:
    (define (enqueue-all q xs)
       (for/fold ([q q]) ([x (in-list xs)]) (enqueue q x)))
    ))
+]
 
+As an example, let's consider positive integers and define the ``successors''
+using the following @racket[halfsies] function:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
 (define (halfsies n)
   (define half (quotient n 2))
   (cond [(<= n 1) null]
         [(even? n) (list half)]
         [else (list half (add1 half))]))
+]
 
-(define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
+The traversal function with a stack worklist implements depth-first search:
+
+@examples[#:eval the-eval #:label #f
 (define/invoke-bundles #:bind ([traversal #:prefix dfs:]) stack@ traversal@)
-
-(bfs:traverse 100 halfsies)
 (dfs:traverse 100 halfsies)
 ]
 
+We could also implement a FIFO queue worklist component:
+
+@examples[#:eval the-eval #:no-prompt #:label #f
+(define queue@
+  (bundle
+   #:export ([worklist #:prefix %])
+   (struct queue (r w))
+   (define %empty (queue null null))
+   (define (%empty? q)
+     (match q [(queue '() '()) #t] [_ #f]))
+   (define (%enqueue q v)
+     (match q
+       [(queue r w) (queue r (cons v w))]))
+   (define (%dequeue q)
+     (match q
+       [(queue '() '()) (error 'remove "empty queue")]
+       [(queue (cons v r) w) (values v (queue r w))]
+       [(queue '() w) (%dequeue (queue (reverse w) '()))]))))
+]
+
+If we link the traversal component with that instead, we get a breadth-first
+search:
+
+@examples[#:eval the-eval #:label #f
+(define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
+(bfs:traverse 100 halfsies)
+]
+
+
+@; FIXME/TODO: example of instance-contract workaround
 
 @; ----------------------------------------
 @subsection[#:tag "comparison"]{Comparison with Other Libraries}
