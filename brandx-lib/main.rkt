@@ -130,6 +130,52 @@
   (vector->immutable-vector
    (vector-extend anc (add1 (vector-length anc)) last-v)))
 
+;; --
+
+#|
+(define ((proxy f prop? prop-ref anc) obj . args)
+  (define obj-anc (and (prop? obj) (vtable-ancestry (prop-ref obj))))
+  (unless (and obj-anc (ancestor? anc obj-anc)) (error))
+  (apply f obj args))
+|#
+
+;; make-super-chaperone : ... -> Procedure -> Procedure
+;; Make chaperone wrapper that checks first argument has correct ancestry.
+(define (make-chaperone-super-method prop? prop-ref anc)
+  (define (ok-first-arg? obj)
+    (and (prop? obj)
+         (let ([obj-anc (vtable-ancestry (prop-ref obj))])
+           (ancestor? anc obj-anc))))
+  (lambda (f)
+    (define fname (object-name f))
+    (define (wrapper obj . args)
+      (unless (ok-first-arg? obj)
+        (error fname "bad target for super method: ~e" obj))
+      (apply values obj args))
+    (define kw-wrapper
+      (make-keyword-procedure
+       (lambda (kws kwargs obj . args)
+         (unless (ok-first-arg? obj)
+           (error fname "bad target for super method: ~e" obj))
+         (apply values kwargs obj args))
+       wrapper))
+    (define-values (req-kws opt-kws) (procedure-keywords f))
+    (cond [(null? opt-kws) (chaperone-procedure f wrapper)]
+          [else (chaperone-procedure f kw-wrapper)])))
+
+(define-values (prop:wrapped-super wrapped-super? wrapped-super-ref)
+  (make-impersonator-property 'wrapped-super))
+
+(define (chaperone-super-vh prop? prop-ref anc vh)
+  (define wrap-method (make-chaperone-super-method prop? prop-ref anc))
+  (define (wrap-value h k v) (wrap-method v))
+  (define (wrap-ref h k) (values k wrap-value))
+  (define (wrap-set h k v) (error 'chaperone-super-vh "set not implemented"))
+  (define (wrap-remove h k) (error 'chaperone-super-vh "remove not implemented"))
+  (define (wrap-key h k) k)
+  (chaperone-hash vh wrap-ref wrap-set wrap-remove wrap-key #f #f
+                  prop:wrapped-super vh))
+
 ;; ============================================================
 ;; Interfaces
 
@@ -227,7 +273,11 @@
 (define (rtif-get-stype-vh ifc stype)
   (define vprop? (rtif-vprop? ifc))
   (define vprop-ref (rtif-vprop-ref ifc))
-  (cond [(vprop? stype) (vtable-vh (vprop-ref stype))]
+  (cond [(vprop? stype)
+         (define vt (vprop-ref stype))
+         (define anc (vtable-ancestry vt))
+         (define vh (vtable-vh vt))
+         (chaperone-super-vh vprop? vprop-ref anc vh)]
         [else (rtif-fallbacks ifc)]))
 
 (struct unimplemented (iname vname)
@@ -1002,7 +1052,9 @@
   (define lkey (tagged-interface->linkage-key ti))
   (define super-lkey (cons (car lkey) '(super)))
   (define vhbox (hash-ref linkage lkey))
-  (define supervh (unbox (hash-ref linkage super-lkey)))
+  (define supervh
+    (let ([supervh (unbox (hash-ref linkage super-lkey))])
+      (if (wrapped-super? supervh) (wrapped-super-ref supervh) supervh)))
   (define iname (rtif-name (car ti)))
   (define in-ctcv (rtif-in-ctcv (car ti)))
   (set-box! vhbox
