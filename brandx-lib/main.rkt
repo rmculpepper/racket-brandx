@@ -7,12 +7,6 @@
 ;; - `augment` methods not supported, since call not tied to `this`
 ;; - interface contracts cannot refer to interface members
 
-;; TODO:
-;; - no-generics implies no prop
-;; - add ordering constraints, eg import with #:prereq
-;; - add inspector, add reflective operations
-;;   - util to check no unimplemented methods (except given list)
-
 #lang racket/base
 (require (for-syntax racket/base
                      racket/match
@@ -30,9 +24,6 @@
          racket/vector
          racket/match)
 (provide define-interface
-         interface?
-         unimplemented?
-         interface->predicate
          interface-out
          bundle
          bundle?
@@ -201,8 +192,6 @@
   (lambda (self out mode)
     (fprintf out "#<interface:~.s>" (rtif-name self))))
 
-(define (interface? v) (rtif? v))
-
 ;; InterfaceKey = Symbol, unique to interface (not interned)
 ;; VarHash = (Hasheq Symbol Value)
 ;; VTable = (vector VarHash Ancestry Value ...)
@@ -290,37 +279,6 @@
    (lambda (self . args)
      (match-define (unimplemented iname vname) self)
      (error vname "not implemented\n  interface: ~a" iname))))
-
-;; interface->predicate : RtInterface (U Symbol #f) -> (Any -> Boolean)
-(define (interface->predicate ifc [vname #f]
-                              #:accept-struct-type? [stype-ok? #f])
-  (define who 'interface->predicate)
-  (unless (interface? ifc)
-    (raise-argument-error who "interface?" ifc))
-  (unless (or (eq? vname #f) (symbol? vname))
-    (raise-argument-error who "(or/c #f symbol?)" vname))
-  (define vprop? (rtif-vprop? ifc))
-  (define predicate-name
-    (string->symbol (format "~a?" (rtif-name ifc))))
-  (cond [vname
-         (define difc (rtif-lookup-definer ifc vname))
-         (unless difc
-           (error who "~a\n  interface: ~e\n  name: ~e"
-                  "name not found in interface" ifc vname))
-         (define dvprop-ref (rtif-vprop-ref difc))
-         (procedure-rename
-          (lambda (v)
-            (and (vprop? v)
-                 (or stype-ok? (not (struct-type? v)))
-                 (let ([vh (vtable-vh (dvprop-ref v))])
-                   (not (unimplemented? (hash-ref vh vname #f))))))
-          predicate-name)]
-        [else
-         (procedure-rename
-          (lambda (v)
-            (and (vprop? v)
-                 (or stype-ok? (not (struct-type? v)))))
-          predicate-name)]))
 
 (define fallbacks/c (hash/c symbol? any/c))
 
@@ -573,13 +531,6 @@
 ;; ============================================================
 ;; Generic Functions
 
-;; make-generic : RtInterface Symbol -> (Instance Any ... -> Any)
-(define (make-generic ifc name)
-  (unless (interface? ifc) (raise-argument-error 'make-generic "interface?" ifc))
-  (unless (symbol? name) (raise-argument-error 'make-generic "symbol?" name))
-  (or (make-generic* ifc name name #t)
-      (error/no-method 'make-generic ifc name)))
-
 ;; make-generic* : RtInterface Symbol Boolean
 ;;              -> (Instance Any ... -> Any) or #f
 (define (make-generic* ifc seek-name name ctc?)
@@ -605,11 +556,6 @@
               name)))
           (if ctc? (staged-out-ctc proc (format "~a (generic)" name) #f #f) proc))
         (ormap loop (rtif-supers ifc)))))
-
-(define (error/no-method who ifc name)
-  (error who "no member found \n  interface: ~e\n  name: ~e"
-         ifc name))
-
 
 ;; ============================================================
 ;; Bundles
@@ -663,89 +609,8 @@
 
 (define listof-bundle/c (listof bundle?))
 
-;; ----------------------------------------
-
-;; make-bundle : #:{export,import} (Listof TaggedInterface) (Lookup -> NameHash)
-;;            -> Bundle
-;; where Lookup = (TaggedInterface Symbol -> Any)
-(define (make-bundle make-table
-                     #:export [exports0 null]
-                     #:import [imports0 null]
-                     #:link [linked-bs null])
-  (define exports1 (convert-tagged-interfaces exports0))
-  (unless exports1
-    (raise-argument-error 'make-bundle "(listof tagged-interface?)" exports0))
-  (define imports1 (convert-tagged-interfaces imports0))
-  (unless imports1
-    (raise-argument-error 'make-bundle "(listof tagged-interface?)" imports0))
-  (unless (and (list? linked-bs) (andmap bundle? linked-bs))
-    (raise-argument-error 'make-bundle "(listof bundle?)" linked-bs))
-  (unless (and (procedure? make-table) (procedure-arity-includes? make-table 1))
-    (raise-argument-error 'make-bundle "(procedure-arity-includes/c 1)" make-table))
-  (define exports (tagged-interfaces-closure exports1))
-  (define imports (tagged-interfaces-closure imports1))
-  (define (init! linkage)
-    (define lookup* ;; mutated
-      (make-linkage-lookup linkage))
-    (define (lookup ifc seek-name)
-      (lookup* ifc seek-name))
-    (define nh (make-table lookup))
-    (unless (and (hash? nh) (for/and ([key (in-hash-keys nh)]) (symbol? key)))
-      (error 'make-bundle "procedure result is not hash with symbol keys\n  result: ~e" nh))
-    (when #t
-      (for ([name (in-hash-keys nh)])
-        (unless (for/or ([export (in-list exports)])
-                  (memq name (rtif-vnames (car export))))
-          (error 'make-bundle "unexpected key in result\n  key: ~e" name))))
-    (set! lookup*
-          (lambda (ifc seek-name)
-            (error 'lookup "~a\n  interface: ~e\n  name: ~e"
-                   "cannot call after linking is complete" ifc seek-name)))
-    (for ([export (in-list exports)])
-      (define lkey (tagged-interface->linkage-key export))
-      (define super-lkey (cons (car lkey) '(super)))
-      (define super-vh (unbox (hash-ref linkage super-lkey)))
-      (define export-box (hash-ref linkage lkey))
-      (set-box! export-box
-                (for/fold ([vh super-vh])
-                          ([vname (in-list (rtif-vnames (car export)))]
-                           #:when (hash-has-key? nh vname))
-                  (hash-set vh vname (hash-ref nh vname))))))
-  (define b1 (bundle1 exports imports init!))
-  (make-bundle* b1 linked-bs))
-
-;; make-linkage-lookup : Linkage -> TaggedInterface Symbol -> Any
-(define ((make-linkage-lookup linkage) ti0 seek-name)
-  (define ti1 (convert-tagged-interface ti0))
-  (unless ti1 (raise-argument-error 'lookup "tagged-interface?" ti0))
-  (unless (symbol? seek-name) (raise-argument-error 'lookup "symbol?" seek-name))
-  (match-define (cons ifc0 tag) ti0)
-  (define difc (rtif-lookup-definer ifc0 seek-name))
-  (cond [difc
-         (define linkage-key (cons (rtif-uid difc) tag))
-         (cond [(hash-ref linkage linkage-key #f)
-                => (lambda (vhbox)
-                     (unless (unbox vhbox)
-                       (error 'lookup "~a\n  tagged interface: ~e"
-                              "imported interface not initialized" ti0))
-                     (hash-ref (unbox vhbox) seek-name))]
-               [else (error 'lookup "~a\n  tagged interface: ~e"
-                            "interface not imported" ti0)])]
-        [else (error 'lookup "~a\n  interface: ~e\n  name: ~e"
-                     "not found in interface" ifc0 seek-name)]))
-
 (define (make-bundle* b1 bs)
   (if (null? bs) b1 (compound-bundle (append bs (list b1)))))
-
-(define (convert-tagged-interfaces vs)
-  (and (list? vs)
-       (let ([tis (map convert-tagged-interface vs)])
-         (and (andmap values tis) tis))))
-(define (convert-tagged-interface v)
-  (match v
-    [(? interface? ifc) (list ifc)]
-    [(cons (? interface?) (list (? symbol?) ...)) v]
-    [_ #f]))
 
 ;; ----------------------------------------
 
@@ -1289,52 +1154,6 @@
   (initialize-supers! #f)
   (run-bundles bs linkage)
   linkage)
-
-;; dynamic-invoke-bundles : #:bind (Listof TaggedInterface) (Listof Bundle) -> VarHash
-(define (dynamic-invoke-bundles #:bind binds0
-                                #:flatten? [flatten? #t]
-                                . bs0)
-  (define who 'dynamic-invoke-bundles)
-  (define binds1 (convert-tagged-interfaces binds0))
-  (unless binds1 (raise-argument-error who "(listof tagged-interface/c)" binds0))
-  (for ([b (in-list bs0)])
-    (unless (bundle? b) (raise-argument-error who "bundle?" b)))
-  (define linkage (invoke-bundles* who binds1 bs0))
-  (if flatten?
-      (linkage->flat-vh who linkage binds1)
-      (linkage->nested-vh who linkage binds1)))
-
-(define (linkage->flat-vh who linkage binds1)
-  (define binds (tagged-interfaces-closure binds1))
-  (for/fold ([h (hasheq)]) ([bind (in-list binds)])
-    (define ifc (car bind))
-    (define lkey (tagged-interface->linkage-key bind))
-    (define bindvh (unbox (hash-ref linkage lkey)))
-    (define vnames (rtif-vnames (car bind)))
-    (define neg-party 'dynamic-invoke-bundles)
-    (define vvalues (vh-extract bindvh ifc vnames neg-party #f "dynamic export"))
-    (for/fold ([h h]) ([vname (in-list vnames)] [vvalue (in-list vvalues)])
-      (hash-set h vname vvalue))))
-
-(define (linkage->nested-vh who linkage binds1)
-  (for/fold ([tih (hash)]) ([bind (in-list binds1)])
-    (define tag (cdr bind))
-    (define vh
-      (let loop ([ifc (car bind)] [vh (hasheq)])
-        (define lkey (tagged-interface->linkage-key (cons ifc tag)))
-        (define bindvh (unbox (hash-ref linkage lkey)))
-        (define vnames (rtif-vnames ifc))
-        (define neg-party 'dynamic-invoke-bundles)
-        (define vvalues (vh-extract bindvh ifc vnames neg-party #f "dynamic export"))
-        (define vh*
-          (for/fold ([vh vh])
-                    ([ifc (in-list (rtif-supers ifc))])
-            (loop ifc vh)))
-        (for/fold ([vh vh*])
-                  ([vname (in-list vnames)]
-                   [vvalue (in-list vvalues)])
-          (hash-set vh vname vvalue))))
-    (hash-set tih bind vh)))
 
 
 ;; ============================================================

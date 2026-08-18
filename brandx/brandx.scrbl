@@ -524,8 +524,7 @@ Defines an interface named @racket[iname] with the given
 members. Specifically, the following names are defined:
 @itemlist[
 
-@item{@svar[iname] --- The interface. When an interface name is used in
-expression position, it evaluates to the interface's run-time representation.}
+@item{@svar[iname] --- The interface.}
 
 @item{@svar[predicate-id], if given, or else @svar[iname?] --- A
 predicate that recognizes instances of struct implementing the
@@ -551,9 +550,8 @@ member.
 If a @racket[#:fallbacks] clause is present, then
 @racket[fallbacks-table-expr] must evaluate to a hash mapping member name
 symbols to their fallback implementations. Any member that is not given a
-fallback implementation has a default fallback value, recognized by
-@racket[unimplemented?], which raises an error when applied. Fallbacks cannot
-be given for super-interface names.
+fallback implementation has a default fallback value that raises an error when
+applied. Fallbacks cannot be given for super-interface names.
 
 By default, a generic function is defined for every member name. If a
 @racket[#:no-generics] clause is given, then no generics are
@@ -561,48 +559,6 @@ defined. If a @racket[#:generics-prefix] clause is given, then the
 generic function names are formed by adding the given prefix to the
 beginning of the member name.
 }
-
-@defproc[(interface? [v any/c]) boolean?]{
-
-Returns @racket[#t] is @racket[v] is a run-time interface representation,
-@racket[#f] otherwise.
-}
-
-@defproc[(unimplemented? [v any/c]) boolean?]{
-
-Returns @racket[#t] if @racket[v] is a default fallback implementation
-procedure created by @racket[define-interface], @racket[#f] otherwise. A
-default fallback procedure accepts any number of arguments and raises an
-``unimplemented'' error.
-}
-
-@defproc[(interface->predicate [ifc interface?]
-                               [name (or/c symbol? #f) #f]
-                               [#:accept-struct-type? accept-struct-type?
-                                                      boolean? #f])
-         (-> any/c boolean)]{
-
-Returns a predicate that recognizes instances of @racket[ifc]. If
-@racket[accept-struct-type?] is false (the default), then the predicate only
-accepts instances of structs implementing @racket[ifc]; if it is true, then
-the predicate also accepts struct type descriptors for structs implementing
-@racket[ifc].
-
-If @racket[name] is a symbol, then @racket[name] must be a member name of
-@racket[ifc], and the predicate is further constrained to only accept
-instances where that member name has a value that is not
-@racket[unimplemented?].
-}
-
-@;{
-@defproc[(make-generic [ifc interface?]
-                       [name symbol?])
-         procedure?]{
-
-Returns a generic function that, when applied, looks up the method associated
-with the @racket[name] member of interface @racket[ifc], and calls it. If
-@racket[name] is not a member name of @racket[ifc], then an error is signaled.
-}}
 
 @defform[(interface-out interface-id)]{
 
@@ -696,16 +652,6 @@ initialization, it will fail if the member is exported from a bundle that has
 not yet been initialized.
 }
 
-@;{
-@defproc[(make-bundle [#:export exports (listof tagged-interface/c) null]
-                      [#:import imports (listof tagged-interface/c) null]
-                      [#:link linked-bundles (listof bundle?) null]
-                      [make-table
-                       (-> (-> tagged-interface/c symbol? any/c)
-                           (hash/c symbol? any/c))])
-         bundle?]{}
-}
-
 @defproc[(bundles->properties [b bundle?] ...)
          (listof (cons/c struct-type-property? any/c))]{
 
@@ -726,23 +672,6 @@ Equivalent to @racketblock[
 
 Links the bundles @racket[(list bundle-expr ...)], invokes them, and defines
 names according to the @racket[import-spec]s.
-}
-
-@;{
-@defproc[(dynamic-invoke-bundles [b bundle?] ...
-                                 [#:bind binds (listof tagged-interface/c)]
-                                 [#:flatten? flatten? boolean? #t])
-         (if/c flatten?
-               (hash/c symbol? any/c)
-               (hash/c tagged-interface/c (hash/c symbol? any/c)))]{
-
-Links the bundles @racket[(list b ...)] and invokes them. If @racket[flatten?]
-is true, then the result is a hash mapping all of the member names from all of
-the interfaces in @racket[binds] to their corresponding values. If
-@racket[flatten?] is false, then the result is a hash mapping each tagged
-interface in @racket[binds] to a hash for that interface's names (including
-those of its super-interfaces).
-}
 }
 
 @; ----------------------------------------
