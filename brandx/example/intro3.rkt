@@ -5,15 +5,17 @@
          brandx
          rackunit)
 
-(define-interface worklist
-  ([empty any/c]
-   [empty? (-> any/c boolean?)]
-   [enqueue (-> any/c any/c any/c)]
-   [dequeue (-> any/c (values any/c any/c))]))
+(define-signature worklist
+  ([worklist/c contract?]
+   [empty #:dep (worklist/c) worklist/c]
+   [empty? #:dep (worklist/c) (-> worklist/c boolean?)]
+   [enqueue #:dep (worklist/c) (-> worklist/c any/c worklist/c)]
+   [dequeue #:dep (worklist/c) (-> worklist/c (values any/c worklist/c))]))
 
 (define stack@
   (bundle
    #:export ([worklist #:prefix %])
+   (define %worklist/c list?)
    (define %empty null)
    (define %empty? null?)
    (define (%enqueue st v) (cons v st))
@@ -22,13 +24,13 @@
 
 ;; ----------------------------------------
 
-(define-interface traversal
+(define-signature traversal
   ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))]))
 
 (define traversal@
   (bundle
    #:export ([traversal #:prefix %])
-   #:import ([worklist])
+   #:import (worklist)
 
    (define (%traverse v get-next)
      (define q (enqueue empty v))
@@ -40,8 +42,9 @@
               (define q3 (enqueue-all q2 (get-next v)))
               (cons v (loop q3))])))
 
+   ;; TODO: turn into aux bundle, but problem: how to contract?
    (define (enqueue-all q xs)
-      (for/fold ([q q]) ([x (in-list xs)]) (enqueue q x)))
+     (for/fold ([q q]) ([x (in-list xs)]) (enqueue q x)))
    ))
 
 ;; ----------------------------------------
@@ -62,6 +65,7 @@
   (bundle
    #:export ([worklist #:prefix %])
    (struct queue (r w))
+   (define %worklist/c queue?)
    (define %empty (queue null null))
    (define (%empty? q)
      (match q [(queue '() '()) #t] [_ #f]))
