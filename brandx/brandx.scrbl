@@ -344,6 +344,7 @@ Here is a loud cat at work:
 (greet (loud-cat))
 ]
 
+@;{
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
 
@@ -474,6 +475,7 @@ search:
 (define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
 (bfs:traverse 100 halfsies)
 ]
+}
 
 @; ----------------------------------------
 @subsection[#:tag "comparison"]{Comparison with Other Libraries}
@@ -517,7 +519,6 @@ construction/initialization support. There is no support for final methods,
           [maybe-contract (code:line)
                           contract-expr]
           [clause (code:line #:fallbacks fallbacks-table-expr)
-                  (code:line #:no-generics)
                   (code:line #:generics-prefix prefix-id)])]{
 
 Defines an interface named @racket[iname] with the given
@@ -531,8 +532,7 @@ predicate that recognizes instances of struct implementing the
 interface.}
 
 @item{@svar[member-id], prefixed with @svar[prefix-id], if given --- A
-generic function for each member of the interface. If the
-@racket[#:no-generics] option was given, no generics are defined.}
+generic function for each member of the interface.}
 
 ]
 
@@ -553,19 +553,16 @@ symbols to their fallback implementations. Any member that is not given a
 fallback implementation has a default fallback value that raises an error when
 applied. Fallbacks cannot be given for super-interface names.
 
-By default, a generic function is defined for every member name. If a
-@racket[#:no-generics] clause is given, then no generics are
-defined. If a @racket[#:generics-prefix] clause is given, then the
-generic function names are formed by adding the given prefix to the
-beginning of the member name.
+A generic function is defined for every member name. If a
+@racket[#:generics-prefix] clause is given, then the generic function names
+are formed by adding the given prefix to the beginning of the member name.
 }
 
 @defform[(interface-out interface-id)]{
 
 Exports the bindings associated with the interface named by
 @racket[interface-id]. Those bindings are @racket[interface-id] itself, the
-interface's predicate, and the generic functions (unless the interface was
-defined with @racket[#:no-generics]).
+interface's predicate, and the generic functions.
 }
 
 @; ============================================================

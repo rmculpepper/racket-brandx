@@ -9,8 +9,7 @@
   ([empty any/c]
    [empty? (-> any/c boolean?)]
    [enqueue (-> any/c any/c any/c)]
-   [dequeue (-> any/c (values any/c any/c))])
-  #:no-generics)
+   [dequeue (-> any/c (values any/c any/c))]))
 
 (define stack@
   (bundle
@@ -24,8 +23,7 @@
 ;; ----------------------------------------
 
 (define-interface traversal
-  ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))])
-  #:no-generics)
+  ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))]))
 
 (define traversal@
   (bundle
