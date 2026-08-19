@@ -15,11 +15,14 @@
 
 @defmodule[brandx]
 
-This library supports interface-oriented programming in Racket via
+This library supports object-oriented and interface-oriented programming via
 @bold{generic} functions. It provides features similar to
 @racketmodname[racket/generic] and @racketmodname[racket/class], and it can
 also replace simple uses of @racketmodname[racket/unit], but it does not
 interoperate with any of those libraries. See also @secref["comparison"].
+
+@section-index["object-oriented programming"
+               "interface-oriented programming"]
 
 @; ============================================================
 @section{Introduction}
@@ -42,7 +45,8 @@ Contracts are optional, but if present they should be ordinary function
 contracts (use @racket[->], @racket[->*], etc; do not use
 @racket[->m]). Contracts do not affect dispatch; this library's generic
 functions always dispatch on the first positional argument, so the first
-argument contract should generally be the interface predicate.
+argument contract should generally be the interface predicate. (This library
+does not support multiple dispatch.)
 
 The interface is implemented by attaching methods to a @racket[struct]
 declaration using @racket[#:properties] and the @racket[method-properties]
@@ -53,6 +57,10 @@ definition, and the @racket[#:prefix %] option indicates that the method
 implementations are named by prefixing the interface member name with
 @racket[%]---this avoids shadowing the generic functions. It is almost always
 a mistake to call an export-prefixed name; use the generic function instead.
+@margin-note{The implementation is implicitly packaged as a @tech{bundle}; the
+@racket[method-properties] form is a convenient composition of
+@racket[bundles->properties] and the @racket[bundle] form. Bundles are the
+units of implementation corresponding to interfaces and signatures.}
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (struct rectangle (x1 y1 x2 y2) (code:comment "x1 <= x2, y1 <= y2")
@@ -185,8 +193,8 @@ implementation which is a procedure that raises an ``unimplemented'' error:
 (eval:error (area (union (circle 0 0 1) (rectangle 0 0 1 1))))
 ]
 
-We can further ``subclass'' the @racket[union] shape with a type that we
-promise to use only if we know through other means that the shapes are
+We can further ``subclass'' the @racket[union] shape with a struct type that
+we promise to use only if we know through other means that the shapes are
 disjoint:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
@@ -229,16 +237,18 @@ kinds of foods, and it is wrong to feed them food that they cannot eat. Unlike
 the @racketmodname[racket/generic] library, @racketmodname[brandx] does not
 support attaching contracts to instances that affect the behavior of generic
 functions (via @racket[redirect-generics], for example). But a different kind
-of instance-specific contracts can be enforced using a generic function and
-dependent function contracts. For example, each animal (type or instance) can
-carry a contract that describes allowable food. Then the @racket[eat]
-operation is described by a dependent contract that dynamically fetches the
-instance's specific food contract using a generic function:
+of instance-specific contracts can be enforced using generic functions and
+dependent function contracts. For example, each animal can implement a
+@racket[get-food/c] method that produces a contract describing its allowed
+food. Then the @racket[eat] operation has a dependent contract that
+dynamically fetches the instance's specific food contract using the
+@racket[get-food/c] generic function:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface can-eat
   ([get-food/c (-> can-eat? contract?)]
-   [eat (->i ([self can-eat?] [food (self) (get-food/c self)])
+   [eat (->i ([self can-eat?]
+              [food (self) (get-food/c self)])
              [_ void?])]))
 ]
 
@@ -278,14 +288,14 @@ barkly
 @; ----------------------------------------
 @subsection[#:tag "intro3"]{Super Calls and Mixins}
 
-A loud dog makes three times as much noise as a regular dog. We can define a
-@racket[loud-dog] struct type that overrides the @racket[greet] method and
+A noisy dog makes three times as much noise as a regular dog. We can define a
+@racket[noisy-dog] struct type that overrides the @racket[greet] method and
 calls its super-implementation (the method from @racket[dog]) as a helper. To
 get access to super-implementations, we use an @racket[#:import] clause with
 the @racket[#:super] tag.
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(struct loud-dog dog ()
+(struct noisy-dog dog ()
   #:properties
   (method-properties
    #:export ([can-greet #:all #:prefix %])
@@ -295,21 +305,22 @@ the @racket[#:super] tag.
      (string-append greeting " " greeting " " greeting))))
 ]
 
-Here is a loud dog at work:
+Here is a noisy dog at work:
 
 @examples[#:eval the-eval #:label #f
-(define princess (loud-dog #t 2 1))
+(define princess (noisy-dog #t 2 1))
 (greet princess)
 (eat princess 'treat)
 ]
 
-Notice, however, that the implementation of loudness had nothing to do with
-the @racket[dog] or @racket[loud-dog] struct type. We can extract the
-``loudness'' behavior into a separate bundle, similar to a mixin in
-@racketmodname[racket/class]:
+Notice, however, that the implementation of noisiness had nothing to do with
+the @racket[dog] or @racket[noisy-dog] struct type. We can extract the
+``noisiness'' behavior into a separate ``mixin'' bundle. (A mixin bundle is
+similar to a mixin in @racketmodname[racket/class], but a mixin bundle cannot
+define fields.)
 
 @examples[#:eval the-eval #:label #f
-(define loud@
+(define noisy@
   (bundle
    #:export ([can-greet #:all #:prefix %])
    #:import ([can-greet #:super])
@@ -331,27 +342,31 @@ Then if we have another kind of animal...
    (define (%eat self food) (void))))
 ]
 
-we can make a loud version by simply linking in the @racket[loud@] mixin
+we can make a noisy version by simply linking in the @racket[noisy@] mixin
 bundle:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(struct loud-cat cat ()
+(struct noisy-cat cat ()
   #:properties
   (method-properties
-   #:link (list loud@)))
+   #:link (list noisy@)))
 ]
 
-Here is a loud cat at work:
+Here is a noisy cat at work:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(greet (loud-cat))
+(greet (noisy-cat))
 ]
 
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
 
-This section provides an example of using @racketmodname[brandx] for component
-programming. Components are described by @tech{signatures}. Like an interface,
+This section provides an example of component programming. That is, this
+section shows how to use @racketmodname[brandx] in a style similar to
+@racketmodname[racket/unit] rather than @racketmodname[racket/generic] or
+@racketmodname[racket/class].
+
+Components are described by @tech{signatures}. Like an interface,
 a signature contains a set of member names, but unlike an interface, the
 signature does not define a predicate or generic functions, and it cannot be
 attached to a struct declaration. On the other hand, signatures directly
@@ -368,8 +383,20 @@ The following is a signature for a worklist component:
    [dequeue #:dep (worklist/c) (-> worklist/c (values any/c worklist/c))]))
 ]
 
-The following stack component is one implementation of the @racket[worklist]
-signature:
+A worklist component decides on a representation for worklists; the decision
+is made by the component, not the interface, and different worklist
+implementations may choose different representations. We could write
+approximate contracts for the operations by using @racket[any/c] for worklist
+arguments and results, but those contracts would fail to catch many misuses of
+the operations. Instead, we can include a signature member,
+@racket[worklist/c], that allows each implementation component to declare a
+contract for its worklist representation, and then the signatures of the other
+operations depend on the worklist contract. When a signature member's contract
+depends on the value of another signature member, it must declare the
+dependency with a @racket[#:dep] clause.
+
+The following @racket[stack@] component, which represents worklists as
+ordinary lists, is one implementation of the @racket[worklist] signature:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define stack@
@@ -385,7 +412,7 @@ signature:
 
 The @racket[traversal] interface has a single member, @racket[traverse], which
 takes an initial value and a successors function, and collects all of the
-values reachabled from the initial value into a list.
+values reachable from the initial value into a list.
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-signature traversal
@@ -463,6 +490,16 @@ search:
 (bfs:traverse 100 halfsies)
 ]
 
+We could also first compound @racket[queue@] and @racket[traversal@] together
+into a single bundle. Doing so does not hide any of their exports, and we still
+invoke the compound bundle in the same way:
+
+@examples[#:eval the-eval #:label #f
+(define queue-traversal@ (bundle #:link (list queue@ traversal@)))
+(define/invoke-bundles #:bind ([traversal #:prefix bfs2:]) queue-traversal@)
+(bfs2:traverse 100 halfsies)
+]
+
 @; ----------------------------------------
 @subsection[#:tag "comparison"]{Comparison with Other Libraries}
 
@@ -477,7 +514,7 @@ the granularity of interfaces.
 Limitations compared to @racketmodname[racket/generic]: This library's generic
 functions always dispatch on their first positional argument, and they do not
 support ``defaults'' (instead, define a wrapper function). Method redirection
-(as with @racket[redirect-generics] etc) is not supported.
+(as with @racket[redirect-generics], etc) is not supported.
 
 Differences from @racketmodname[racket/class]: Users retain direct access to
 structs, including pattern-matching via @racket[match]. All method names to be
@@ -492,6 +529,13 @@ construction/initialization support. There is no support for final methods,
 
 @; ----------------------------------------
 @section[#:tag "interface"]{Interfaces}
+
+An @deftech{interface} describes a set of names that can be implemented with
+@tech{methods} and called using @deftech{generic functions}. A
+@deftech{method} is a procedure that accepts at least one positional argument
+that is a candidate implementation for a @tech{generic function} to dispatch
+to. @tech{Methods} are attached to @racket[struct] declarations using
+@racket[method-properties] or @racket[bundles->properties].
 
 @defform[(define-interface iname maybe-supers maybe-predicate
            (member-decl ...) clause ...)
@@ -511,14 +555,14 @@ Defines an interface named @racket[iname] with the given
 members. Specifically, the following names are defined:
 @itemlist[
 
-@item{@svar[iname] --- The interface.}
+@item{@svar[iname] --- The interface, used mainly in import and export
+specifications.}
 
-@item{@svar[predicate-id], if given, or else @svar[iname?] --- A
-predicate that recognizes instances of struct implementing the
-interface.}
+@item{@svar[predicate-id], if given, or else @svar[iname?] --- A predicate
+that recognizes instances of struct types implementing the interface.}
 
-@item{@svar[member-id], prefixed with @svar[prefix-id], if given --- A
-generic function for each member of the interface.}
+@item{@svar[member-id], prefixed with @svar[prefix-id], if given --- A generic
+function for each member of the interface.}
 
 ]
 
@@ -552,13 +596,38 @@ interface's predicate, and the generic functions.
 }
 
 @; ============================================================
+@section[#:tag "signature"]{Signatures}
+
+A @deftech{signature} describes a set of names that can be implemented with a
+@tech{bundle} and linked with other bundles.
+
+@defform[(define-signature signame (member-decl ...))
+         #:grammar
+         ([member-decl member-id
+                       [member-id maybe-contract]]
+          [maybe-contract (code:line)
+                          (code:line contract-expr)
+                          (code:line #:dep (dep-member-id ...) contract-expr)])]{
+
+Defines @racket[signame] as a signature with the given members. Unlike
+@racket[define-interface], no predicate or generic functions are defined, and
+signatures do not support super-signatures or fallback implementations.
+
+If a member has a contract, the contract protects imports and exports of the
+signature member. If the contract has a @racket[#:dep (_dep-member-id ...)]
+clause, then each @racket[_dep-member-id] is in scope for the evaluation of
+the contract expression, bound to the value of the signature member.
+}
+
+@; ============================================================
 @section[#:tag "bundles"]{Bundles}
 
-Interfaces are implemented by @deftech{bundles}, which are created with the
-@racket[bundle] form and may be invoked using @racket[define/invoke-bundles]
-or, more typically, attached to a struct type using
-@racket[bundles->properties]. The @racket[method-properties] form provides a
-convenient combination of @racket[bundles->properties] and @racket[bundle].
+Interfaces and signatures are implemented by @deftech{bundles}, which are
+created with the @racket[bundle] form and may be invoked using
+@racket[define/invoke-bundles] or, more typically, attached to a struct type
+using @racket[bundles->properties]. The @racket[method-properties] form
+provides a convenient combination of @racket[bundles->properties] and
+@racket[bundle].
 
 @defproc[(bundle? [v any/c]) boolean?]{
 
@@ -570,8 +639,10 @@ Returns @racket[#t] if @racket[v] is a bundle, @racket[#f] otherwise.
          ([link-clause (code:line #:export (export-spec ...))
                        (code:line #:import (import-spec ...))
                        (code:line #:link bundle-list-expr)]
-          [export-spec [interface-id maybe-tag maybe-complete maybe-prefix]]
-          [import-spec [interface-id maybe-tag/super maybe-prefix]]
+          [export-spec interface/signature-id
+                       [interface/signature-id maybe-tag maybe-complete maybe-prefix]]
+          [import-spec interface/signature-id
+                       [interface/signature-id maybe-tag/super maybe-prefix]]
           [maybe-tag (code:line)
                      (code:line #:tag (id ...))]
           [maybe-complete (code:line)
@@ -586,20 +657,23 @@ Produces a @tech{bundle} with the given exports, imports, linked bundles, and
 definitions.
 
 The @racket[#:export] clause declares what the bundle implements. An export
-consists of an interface name, an optional tag, an optional except-list, and
-an optional prefix. The export is satisfied by definitions in the bundle's
-body matching the names of the interface members, prefixed by the export
-prefix, if given. An export of an interface also includes all of its
-super-interfaces. An exported name that has no definition in the body retains
-the value from the super struct type, if applicable, or the interface's
-fallback implementation, otherwise.
+consists of an interface or signature name, an optional tag, an optional
+except-list, and an optional prefix. The export is satisfied by definitions in
+the bundle's body matching the names of the interface or signature members,
+prefixed by the export prefix, if given. An export of an interface also
+includes all of its super-interfaces. A member of an exported interface that
+has no definition in the body retains the value from the super struct type, if
+applicable, or the interface's fallback implementation, otherwise. If a member
+of an exported signature has no definition in the body, a syntax error is
+raised.
 
-If an export contains an @racket[#:all] or @racket[#:except] clause, it
-triggers a completeness check for the exported interface. If an
-@racket[#:except] clause is present, then the body must contain a definition
-for every member except those listed. An @racket[#:all] clause is equivalent
-to @racket[#:except ()]. If neither is present, then no completeness check is
-done.
+If an interface export contains an @racket[#:all] or @racket[#:except] clause,
+it triggers a completeness check for the export. If an @racket[#:except]
+clause is present, then the body must contain a definition for every member
+except those listed. An @racket[#:all] clause is equivalent to
+@racket[#:except ()]. If neither is present, then no completeness check is
+done. A signature export always performs a completeness check; the
+@racket[#:all] option is allowed but redundant.
 
 If an export contains a non-empty prefix, then any definition in the bundle
 body of a name matching that prefix (and set of scopes) must correspond to an
@@ -607,17 +681,20 @@ exported member name, otherwise an error is signaled. (This check helps
 prevent typos from causing missed exports.)
 
 The @racket[#:import] clause declares the bundle's imports. Like an export, an
-import consists of an interface name, an optional tag, and an optional
-prefix. The special import form @racket[[interface-id #:super]] is equivalent
-to @racket[[interface-id #:tag (super) #:prefix super-]].
+import consists of an interface or signature name, an optional tag, and an
+optional prefix. The special import form @racket[[interface-id #:super]] is
+equivalent to @racket[[interface-id #:tag (super) #:prefix super-]]. If a
+signature import has @racket[#:super] or @racket[#:tag (super)], a syntax
+error is raised.
 
 Imports and exports allow tags to distinguish between multiple occurrences of
-the same interface in the linkage graph. An import in one bundle matches an
-export in another bundle only if both the interface and tag matches. The
-default tag is @racket[()]. The tag @racket[(super)] is special; it is
-forbidden as an export tag, and as an import it is automatically satisfied by
-the linker using the implementation from the struct super-type (if applicable)
-or the interface's fallbacks.
+the same interface or signature in the linkage graph. An import in one bundle
+matches an export in another bundle only if both the interface/signature and
+tag match. The default tag is @racket[()]. The tag @racket[(super)] is
+special; it is forbidden as a signature tag and as an interface export tag,
+and as an interface import tag it is automatically satisfied by the linker
+using the implementation from the struct super-type (if applicable) or the
+interface's fallbacks.
 
 If a @racket[#:link] clause is present, then @racket[bundle-list-expr] must
 evaluate to a list of bundles. The linked bundles are included in the linkage
