@@ -77,7 +77,7 @@
 (struct loud-cat cat ()
   #:properties
   (method-properties
-   #:link (list loud@)))
+   #:compound (list loud@)))
 
 (check-equal? (greet (loud-cat))
               "meow meow meow")

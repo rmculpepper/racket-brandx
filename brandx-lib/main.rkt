@@ -889,15 +889,15 @@
 (define-syntax (bundle* outer-stx)
   (define stx (syntax-parse outer-stx [(_ expr) #'expr]))
   (syntax-parse stx
-    [(_ #:link (~var link-bs (expr/c #'listof-bundle/c)))
+    [(_ #:compound (~var link-bs (expr/c #'listof-bundle/c)))
      #'(compound-bundle link-bs.c)]
     [(_ (~alt
          (~optional (~seq #:export (e:export-spec ...))
                     #:name "export clause")
          (~optional (~seq #:import (i:import-spec ...))
                     #:name "import clause")
-         (~optional (~seq #:link (~var link-bs (expr/c #'listof-bundle/c)))
-                    #:name "link clause"))
+         (~optional (~seq #:compound (~var link-bs (expr/c #'listof-bundle/c)))
+                    #:name "compound clause"))
         ...
         body:body-term ...)
      (define eies (elaborate-impexps (datum (~? (e.ast ...) ())) "exports"))

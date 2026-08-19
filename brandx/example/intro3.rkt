@@ -78,6 +78,9 @@
        [(queue (cons v r) w) (values v (queue r w))]
        [(queue '() w) (%dequeue (queue (reverse w) '()))]))))
 
-(define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
+(define queue-traversal@
+  (bundle #:compound (list queue@ traversal@)))
+
+(define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue-traversal@)
 
 (check-pred list? (bfs:traverse 100 halfsies))

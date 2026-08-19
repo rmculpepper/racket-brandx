@@ -342,14 +342,14 @@ Then if we have another kind of animal...
    (define (%eat self food) (void))))
 ]
 
-we can make a noisy version by simply linking in the @racket[noisy@] mixin
+we can make a noisy version by simply including the @racket[noisy@] mixin
 bundle:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (struct noisy-cat cat ()
   #:properties
   (method-properties
-   #:link (list noisy@)))
+   #:compound (list noisy@)))
 ]
 
 Here is a noisy cat at work:
@@ -495,7 +495,7 @@ into a single bundle. Doing so does not hide any of their exports, and we still
 invoke the compound bundle in the same way:
 
 @examples[#:eval the-eval #:label #f
-(define queue-traversal@ (bundle #:link (list queue@ traversal@)))
+(define queue-traversal@ (bundle #:compound (list queue@ traversal@)))
 (define/invoke-bundles #:bind ([traversal #:prefix bfs2:]) queue-traversal@)
 (bfs2:traverse 100 halfsies)
 ]
@@ -638,7 +638,7 @@ Returns @racket[#t] if @racket[v] is a bundle, @racket[#f] otherwise.
          #:grammar
          ([link-clause (code:line #:export (export-spec ...))
                        (code:line #:import (import-spec ...))
-                       (code:line #:link bundle-list-expr)]
+                       (code:line #:compound bundle-list-expr)]
           [export-spec interface/signature-id
                        [interface/signature-id maybe-tag maybe-complete maybe-prefix]]
           [import-spec interface/signature-id
@@ -696,12 +696,12 @@ and as an interface import tag it is automatically satisfied by the linker
 using the implementation from the struct super-type (if applicable) or the
 interface's fallbacks.
 
-If a @racket[#:link] clause is present, then @racket[bundle-list-expr] must
-evaluate to a list of bundles. The linked bundles are included in the linkage
+If a @racket[#:compound] clause is present, then @racket[bundle-list-expr]
+must evaluate to a list of bundles. These bundles are included in the linkage
 graph when the enclosing bundle is linked and invoked. They may satisfy
 imports and consume exports of the enclosing bundle, but their imports and
 exports must not be duplicated in the @racket[#:import] and @racket[#:export]
-clauses of the enclosing bundle. When the bundle is invoked, the linked
+clauses of the enclosing bundle. When the bundle is invoked, the included
 bundles are invoked in order before the body is evaluated.
 
 Depending on the link order, a bundle may have imports that are not fully
