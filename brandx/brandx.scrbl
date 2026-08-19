@@ -225,22 +225,27 @@ each kind of behavior. The @racket[can-greet] interface is simple:
 ]
 
 The interface for eating is more complicated. Different animals eat different
-kinds of foods, and it is wrong to feed them food that they cannot eat. One
-way to represent this is to have each animal (type or instance) carry a
-contract that describes allowable food. Then the @racket[eat] operation is
-described by a dependent contract:
+kinds of foods, and it is wrong to feed them food that they cannot eat. Unlike
+the @racketmodname[racket/generic] library, @racketmodname[brandx] does not
+support attaching contracts to instances that affect the behavior of generic
+functions (via @racket[redirect-generics], for example). But a different kind
+of instance-specific contracts can be enforced using a generic function and
+dependent function contracts. For example, each animal (type or instance) can
+carry a contract that describes allowable food. Then the @racket[eat]
+operation is described by a dependent contract that dynamically fetches the
+instance's specific food contract using a generic function:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-interface can-eat
-  ([food/c (-> can-eat? contract?)]
-   [eat (->i ([self can-eat?] [food (self) (food/c self)])
+  ([get-food/c (-> can-eat? contract?)]
+   [eat (->i ([self can-eat?] [food (self) (get-food/c self)])
              [_ void?])]))
 ]
 
 A dog can both make noise and eat:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(struct dog ([weight #:mutable] [happiness #:mutable])
+(struct dog (veg? [weight #:mutable] [happiness #:mutable])
   #:transparent
   #:properties
   (method-properties
@@ -248,7 +253,8 @@ A dog can both make noise and eat:
              [can-eat #:all #:prefix %])
    (define-struct-abbrevs dog)
    (define (%greet self) (if (>= (.weight self) 10) "woof" "bark"))
-   (define (%food/c self) (or/c 'dog-food 'cheese 'treat))
+   (define (%get-food/c self)
+     (or/c 'dog-food 'treat (if (.veg? self) 'carrot 'cheese)))
    (define (%eat self food)
      (case food
        [(treat) (.happiness-set! self (add1 (.happiness self)))]
@@ -256,13 +262,10 @@ A dog can both make noise and eat:
 ]
 
 Note that multiple exports may use the same export prefix, as above, or they
-may use different export prefixes. Also note that in this case, the food
-contract is independent of the instance, but one could also have an
-implementation of @racket[food/c] that computes its contract from instance
-fields.
+may use different export prefixes.
 
 @examples[#:eval the-eval #:label #f
-(define barkly (dog 8 5))
+(define barkly (dog #f 8 5))
 (greet barkly)
 (eat barkly 'dog-food)
 (eat barkly 'cheese)
@@ -295,7 +298,7 @@ the @racket[#:super] tag.
 Here is a loud dog at work:
 
 @examples[#:eval the-eval #:label #f
-(define princess (loud-dog 2 1))
+(define princess (loud-dog #t 2 1))
 (greet princess)
 (eat princess 'treat)
 ]
@@ -324,7 +327,7 @@ Then if we have another kind of animal...
    #:export ([can-greet #:all #:prefix %]
              [can-eat #:all #:prefix %])
    (define (%greet self) "meow")
-   (define (%food/c self) (or/c 'cat-food 'fish 'bird 'mouse))
+   (define (%get-food/c self) (or/c 'cat-food 'fish 'bird 'mouse))
    (define (%eat self food) (void))))
 ]
 
@@ -354,7 +357,7 @@ signature does not define a predicate or generic functions, and it cannot be
 attached to a struct declaration. On the other hand, signatures directly
 support contracts that depend on other signature members.
 
-The following is an interface for a worklist component:
+The following is a signature for a worklist component:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
 (define-signature worklist
