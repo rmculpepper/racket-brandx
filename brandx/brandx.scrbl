@@ -344,43 +344,26 @@ Here is a loud cat at work:
 (greet (loud-cat))
 ]
 
-@;{
 @; ----------------------------------------
 @subsection[#:tag "intro-components"]{Components}
 
-This section provides an example of using interfaces and bundles for component
-programming.
+This section provides an example of using @racketmodname[brandx] for component
+programming. Components are described by @tech{signatures}. Like an interface,
+a signature contains a set of member names, but unlike an interface, the
+signature does not define a predicate or generic functions, and it cannot be
+attached to a struct declaration. On the other hand, signatures directly
+support contracts that depend on other signature members.
 
-Interfaces intended for use with components should use the
-@racket[#:no-generics] option, which omits the definition of the interface
-predicate and generic functions. The following is an interface for a worklist
-component:
+The following is an interface for a worklist component:
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(define-interface worklist
-  ([empty any/c]
-   [empty? (-> any/c boolean?)]
-   [enqueue (-> any/c any/c any/c)]
-   [dequeue (-> any/c (values any/c any/c))])
-  #:no-generics)
-]
-
-It would be appealing to have the worklist signature contain a predicate or
-contract for the component's worklist representation, like so:
-
-@racketblock[
-(code:comment "NOT SUPPORTED")
-(define-interface worklist
+(define-signature worklist
   ([worklist/c contract?]
-   [empty worklist/c]
-   [empty? (-> worklist/c boolean?)]
-   [enqueue (-> worklist/c any/c worklist/c)]
-   [dequeue (-> worklist/c (values any/c worklist/c))])
-  #:no-generics)
+   [empty #:dep (worklist/c) worklist/c]
+   [empty? #:dep (worklist/c) (-> worklist/c boolean?)]
+   [enqueue #:dep (worklist/c) (-> worklist/c any/c worklist/c)]
+   [dequeue #:dep (worklist/c) (-> worklist/c (values any/c worklist/c))]))
 ]
-
-But alas, this library does not allow interface contracts to depend on
-interface members.
 
 The following stack component is one implementation of the @racket[worklist]
 signature:
@@ -389,6 +372,7 @@ signature:
 (define stack@
   (bundle
    #:export ([worklist #:prefix %])
+   (define %worklist/c list?)
    (define %empty null)
    (define %empty? null?)
    (define (%enqueue st v) (cons v st))
@@ -401,9 +385,8 @@ takes an initial value and a successors function, and collects all of the
 values reachabled from the initial value into a list.
 
 @examples[#:eval the-eval #:no-prompt #:label #f
-(define-interface traversal
-  ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))])
-  #:no-generics)
+(define-signature traversal
+  ([traverse (-> any/c (-> any/c (listof any/c)) (listof any/c))]))
 ]
 
 Here is an implementation of the traversal component that does no
@@ -413,7 +396,7 @@ cycle detection. It uses the worklist component to manage its state.
 (define traversal@
   (bundle
    #:export ([traversal #:prefix %])
-   #:import ([worklist])
+   #:import (worklist)
 
    (define (%traverse v get-next)
      (define q (enqueue empty v))
@@ -455,6 +438,7 @@ We could also implement a FIFO queue worklist component:
   (bundle
    #:export ([worklist #:prefix %])
    (struct queue (r w))
+   (define %worklist/c queue?)
    (define %empty (queue null null))
    (define (%empty? q)
      (match q [(queue '() '()) #t] [_ #f]))
@@ -475,7 +459,6 @@ search:
 (define/invoke-bundles #:bind ([traversal #:prefix bfs:]) queue@ traversal@)
 (bfs:traverse 100 halfsies)
 ]
-}
 
 @; ----------------------------------------
 @subsection[#:tag "comparison"]{Comparison with Other Libraries}
