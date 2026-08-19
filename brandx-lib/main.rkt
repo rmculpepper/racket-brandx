@@ -7,6 +7,12 @@
 ;; - `augment` methods not supported, since call not tied to `this`
 ;; - interface contracts cannot refer to interface members
 
+;; TODO:
+;; - define-signature: add abbrev for repeated #:dep clauses
+;; - define-signature: add #:require (sig ...) option
+;;   - required signature member names are available for dep contracts
+;;   - at link time, export of sig (w/ same tags) must be in linkage graph
+
 #lang racket/base
 (require (for-syntax racket/base
                      racket/match
@@ -115,7 +121,6 @@
     (fprintf out "#<signature:~.s>" (rtsig-name self))))
 
 (define (create-rtdepsig signame uid vnames ctcv)
-  ;; FIXME: check ctcv deps unique, in vnames
   (rtdepsig signame uid null vnames ctcv))
 
 ;; rtdepsig-apply-contracts : RtDepSig VarHash Boolean Party Location -> VarHash
@@ -331,20 +336,31 @@
 
 (define-syntax (define-signature stx)
   (define-syntax-class var-decl
-    #:attributes (name ctce)
+    #:attributes (name ctce [dep 1])
     (pattern name:id
+             #:with (dep ...) null
              #:with ctce #'#f)
     (pattern [name:id (~optional :contract-spec)]))
   (define-splicing-syntax-class contract-spec
-    #:attributes (ctce)
+    #:attributes (ctce [dep 1])
     (pattern (~seq #:dep (dep:id ...) ctc:expr)
              #:with ctce #'(cons (quote (dep ...))
                                  (lambda (dep ...)
                                    (coerce-contract 'define-signature ctc))))
     (pattern ctc:expr
+             #:with (dep ...) null
              #:with ctce #'(coerce-contract 'define-signature ctc)))
   (syntax-parse stx
     [(_ signame:id (d:var-decl ...))
+     (let ([dup (check-duplicates (datum (d.name ...)) #:key syntax-e)])
+       (when dup (wrong-syntax dup "duplicate member name")))
+     (let ([vnames (syntax->datum #'(d.name ...))])
+       (for ([deps (in-list (datum ((d.dep ...) ...)))])
+         (for ([dep (in-list deps)])
+           (unless (memq (syntax-e dep) vnames)
+             (wrong-syntax dep "not a signature member")))
+         (let ([dup (check-duplicate-identifier deps)])
+           (when dup (wrong-syntax dup "duplicate identifier in dependency list")))))
      (define/with-syntax (rtname) (generate-temporaries #'(signame)))
      (define/with-syntax (pre-def ...)
        ;; fixes unbound-identifier errors when used at top level
@@ -415,6 +431,8 @@
         ...)
      (define/with-syntax (rtname) (generate-temporaries #'(iname)))
      (define/with-syntax (vname ...) #'(d.name ...))
+     (let ([dup (check-duplicates (datum (vname ...)) #:key syntax-e)])
+       (when dup (wrong-syntax dup "duplicate member name")))
      (define/with-syntax (ctcname ...)
        (generate-temporaries (datum (vname ...))))
      (define/with-syntax iname?
