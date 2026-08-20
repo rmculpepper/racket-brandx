@@ -282,15 +282,14 @@ may use different export prefixes.
 (eat barkly 'treat)
 barkly
 (greet barkly)
-(eval:error (eat barkly 'lettuce))
+(eval:error (eat barkly 'carrot))
 ]
 
 To summarize, @racketmodname[brandx]'s contract support focuses on operations
-and their implementations; this section shows how to enforce
-@emph{instance-specific} contracts on @emph{operations}. Of course, instances
-can also be protected directly using contracts on their representations, but
-the resulting contract violations will be reported in terms of the
-representation:
+and their implementations; this section shows how to enforce instance-specific
+contracts on operations. Of course, instances can also be protected directly
+using contracts on their representations, but the resulting contract
+violations will be reported in terms of the representation:
 
 @examples[#:eval the-eval #:label #f
 (define/contract fifi
