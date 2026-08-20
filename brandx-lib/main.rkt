@@ -187,9 +187,9 @@
 (define VSTART 2)
 
 ;; create-rtif : Symbol Symbol (Listof Symbol)
-;;               (Vectorof (U Contract #f)) DeriveProps VarHash
+;;               (Vectorof (U Contract #f)) DeriveProps VarHash Party
 ;;            -> RtInterface
-(define (create-rtif iname uid supers vnames ctcv derives fallbacks)
+(define (create-rtif iname uid supers vnames ctcv derives fallbacks fallbacks-party)
   (define len (length vnames))
   (define-values (vprop vprop? vprop-ref)
     (make-interface-property iname vnames derives))
@@ -203,9 +203,13 @@
            (for/list ([ctc (in-vector ctcv)] [vname (in-list vnames)])
              (stage-contract ctc ifc-party))))
   (define fallbacks*
-    (for/fold ([vh (hasheq)]) ([vname (in-list vnames)])
-      (hash-set vh vname (hash-ref fallbacks vname (lambda () (unimplemented iname vname))))))
-  (for ([key (in-hash-keys fallbacks)] #:when (not (hash-has-key? fallbacks* key)))
+    (for/fold ([vh (hasheq)])
+              ([vname (in-list vnames)]
+               [staged-in-ctc (in-vector in-ctcv)])
+      (define v (hash-ref fallbacks vname (lambda () (unimplemented iname vname))))
+      (define bname (format "~a (fallback)" vname))
+      (hash-set vh vname (staged-in-ctc v bname fallbacks-party #f))))
+  (for ([key (in-hash-keys fallbacks)] #:when (not (memq key vnames)))
     (error 'interface "unexpected key in fallbacks\n  key: ~e\n  interface: ~e"
            key iname))
   (rtif iname uid supers vnames
@@ -461,18 +465,19 @@
            (let ([ctcname (~? (coerce-contract 'define-interface d.ctc) #f)] ...)
              (create-rtif-from-ctif iname (vector-immutable ctcname ...)
                                     (~? fallbacks.c (hasheq))
+                                    (current-contract-region)
                                     (list dc.kvpair ...))))
          (define-interface-generics iname ((vctc? gname vname) ...)))]))
 
 (define-syntax (create-rtif-from-ctif stx)
   (syntax-parse stx
-    [(_ ifc:interface-ref ctcv:expr fallbacks:expr derives:expr)
+    [(_ ifc:interface-ref ctcv:expr fallbacks:expr fallbacks-party:expr derives:expr)
      (define ct (datum ifc.value))
      (match-define (ctif iname uid _ supers vnames _) (datum ifc.value))
      (with-syntax ([iname iname] [uid uid] [vnames vnames])
        (with-syntax ([(super-ifcvar ...) (map ctsig-rt supers)])
          #`(create-rtif (quote iname) (quote uid) (list super-ifcvar ...)
-                        (quote vnames) ctcv derives fallbacks)))]))
+                        (quote vnames) ctcv derives fallbacks fallbacks-party)))]))
 
 (define-syntax (define-interface-generics stx)
   (syntax-parse stx
