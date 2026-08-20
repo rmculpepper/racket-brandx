@@ -291,7 +291,6 @@
     (define/with-syntax (name rtname (super-id ...) (vname ...) extra)
       info-stx)
     (define uid (string->uninterned-symbol (symbol->string (syntax-e #'name))))
-    ;; FIXME: check no duplicate names
     (define supers (map syntax-local-value (datum (super-id ...))))
     (let ()
       (define seen (make-hasheq))
@@ -659,6 +658,20 @@
 (define listof-bundle/c (listof bundle?))
 
 (define (make-bundle* b1 bs)
+  (define who 'bundle)
+  (let ([exports (bundle1-exports b1)])
+    (for ([export (in-list exports)])
+      (match-define (cons sig tag) export)
+      (when (equal? tag '(super))
+        (error who "illegal export with reserved super tag\n  export: ~a"
+               (tagged-sig->string export)))))
+  (let ([imports (bundle1-imports b1)])
+    (for ([import (in-list imports)])
+      (match-define (cons sig tag) import)
+      (when (equal? tag '(super))
+        (unless (rtif? sig)
+          (error who "illegal import of signature with super tag\n  import: ~a"
+                 (tagged-sig->string import))))))
   (if (null? bs) b1 (compound-bundle (append bs (list b1)))))
 
 ;; ----------------------------------------
@@ -1168,10 +1181,7 @@
   ;; handle-export : TaggedInterface Linkage -> Linkage
   (define (handle-export export linkage)
     (define lkey (tagged-sig->linkage-key export))
-    (cond [(super-linkage-key? lkey)
-           (error who "illegal export with reserved super tag\n  export: ~a"
-                  (tagged-sig->string export))]
-          [(hash-ref linkage lkey #f)
+    (cond [(hash-ref linkage lkey #f)
            => (lambda (link-box)
                 (error who "duplicate export: ~a"
                        (tagged-sig->string (unbox link-box))))]
@@ -1190,9 +1200,6 @@
     (define lkey (tagged-sig->linkage-key import))
     (cond [(super-linkage-key? lkey)
            (define sig (car import))
-           (unless (rtif? sig)
-             (error who "illegal import of signature with super tag\n  import: ~a"
-                    (tagged-sig->string import)))
            (cons sig acc)]
           [(hash-has-key? linkage lkey) acc]
           [else (error who "import missing matching export\n  import: ~a"
@@ -1237,12 +1244,11 @@
   ;; FIXME: check for var collisions
   (define bs (flatten-bundles bs0))
   (define-values (exports linkage initialize-supers!)
-    (bundles-prepare-linkage 'invoke-bundles bs))
+    (bundles-prepare-linkage who bs))
   (for ([bind (in-list binds)])
     (define lkey (tagged-sig->linkage-key bind))
     (unless (hash-has-key? linkage lkey)
-      (error 'invoke-bundles "~a\n  tagged signature: ~a"
-             "tagged signature not exported"
+      (error who "tagged signature not exported\n  tagged signature: ~a"
              (tagged-sig->string bind))))
   (initialize-supers! #f)
   (run-bundles bs linkage)

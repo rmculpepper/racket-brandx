@@ -11,7 +11,7 @@
    (let () body ... (void))))
 
 ;; ----------------------------------------
-;; syntax errors
+;; errors
 
 (check-exn
  #rx"duplicate member name"
@@ -42,9 +42,9 @@
 (check-exn
  #rx"unexpected key in fallbacks"
  (lambda ()
-   (convert-syntax-error/body
-    (define-interface I (x)
-      #:fallbacks (hasheq 'y void)))))
+   (define-interface I (a)
+     #:fallbacks (hasheq 'b void))
+   (void)))
 
 (check-exn
  #rx"not a member name"
@@ -79,7 +79,108 @@
      #:export ([I1 #:except (x)])
      (void)))))
 
+(check-exn
+ #rx"incompatible exports; prefixes differ"
+ (lambda ()
+   (define-interface I2 #:super (I1) (h))
+   (convert-syntax-error
+    (bundle
+     #:export ([I1 #:prefix %]
+               [I2 #:prefix &])))))
 
+(check-exn
+ #rx"incompatible exports; export exceptions differ"
+ (lambda ()
+   (define-interface I2 #:super (I1) (h))
+   (convert-syntax-error
+    (bundle
+     #:export (I1 [I2 #:except (g)])))))
 
-;; ----------------------------------------
-;; contracts
+(check-exn
+ #rx"incompatible import/export.*name collision"
+ (lambda ()
+   (define-interface I2 (f))
+   (convert-syntax-error
+    (bundle
+     #:export (I1 I2)))))
+
+(check-exn
+ #rx"does not match any export"
+ (lambda ()
+   (convert-syntax-error
+    (bundle
+     #:export ([I1 #:prefix %])
+     (define %f void)
+     (define %g void)
+     (define %bad void)))))
+
+(check-exn
+ #rx"member name is defined but"
+ (lambda ()
+   (convert-syntax-error
+    (bundle
+     #:export ([I1 #:except (g)])
+     (define f void)
+     (define g void)))))
+
+(check-exn
+ #rx"required member name is not defined: g"
+ (lambda ()
+   (convert-syntax-error
+    (bundle
+     #:export ([I1 #:all])
+     (define f void)))))
+
+(check-exn
+ #rx"attempt to mutate exported variable"
+ (lambda ()
+   (convert-syntax-error
+    (bundle
+     #:export ([I1 #:all])
+     (define f void)
+     (define g void)
+     (void (set! f void))))))
+
+(check-exn
+ #rx"import not initialized"
+ (lambda ()
+   (define/invoke-bundles
+     #:bind ()
+     (bundle #:import (S1) (void a))
+     (bundle #:export (S1) (define a 1) (define b 2)))
+   (void)))
+
+(check-exn
+ #rx"illegal export with reserved super tag"
+ (lambda ()
+   (bundle #:export ([I1 #:tag (super)]))))
+
+(check-exn
+ #rx"duplicate export"
+ (lambda ()
+   (define/invoke-bundles
+     #:bind ()
+     (bundle #:export (I1))
+     (bundle #:export (I1)))
+   (void)))
+
+(check-exn
+ #rx"illegal import of signature with super tag"
+ (lambda ()
+   (bundle #:import ([S1 #:tag (super)]))))
+
+(check-exn
+ #rx"import missing matching export"
+ (lambda ()
+   (define/invoke-bundles
+     #:bind ()
+     (bundle #:import (S1)))
+   (void)))
+
+(check-exn
+ #rx"tagged signature not exported"
+ (lambda ()
+   (define/invoke-bundles
+     #:bind (S1)
+     (bundle))
+   (void)))
