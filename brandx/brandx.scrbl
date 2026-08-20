@@ -285,8 +285,23 @@ barkly
 (eval:error (eat barkly 'lettuce))
 ]
 
+To summarize, @racketmodname[brandx]'s contract support focuses on operations
+and their implementations; this section shows how to enforce
+@emph{instance-specific} contracts on @emph{operations}. Of course, instances
+can also be protected directly using contracts on their representations, but
+the resulting contract violations will be reported in terms of the
+representation:
+
+@examples[#:eval the-eval #:label #f
+(define/contract fifi
+  (struct/c dog boolean? (between/c 0 5) real?)
+  (dog #f 5 8))
+(eval:error (eat fifi 'cheese))
+]
+
+
 @; ----------------------------------------
-@subsection[#:tag "intro3"]{Super Calls and Mixins}
+@subsection[#:tag "intro3"]{Inheritance, Super Calls, and Mixins}
 
 A noisy dog makes three times as much noise as a regular dog. We can define a
 @racket[noisy-dog] struct type that overrides the @racket[greet] method and
@@ -513,8 +528,9 @@ the granularity of interfaces.
 
 Limitations compared to @racketmodname[racket/generic]: This library's generic
 functions always dispatch on their first positional argument, and they do not
-support ``defaults'' (instead, define a wrapper function). Method redirection
-(as with @racket[redirect-generics], etc) is not supported.
+support ``defaults'' (@racket[#:defaults] and @racket[#:fast-defaults] in
+@racket[define-generics]); instead, define a wrapper function. Method
+redirection (as with @racket[redirect-generics], etc) is not supported.
 
 Differences from @racketmodname[racket/class]: Users retain direct access to
 structs, including pattern-matching via @racket[match]. All method names to be
