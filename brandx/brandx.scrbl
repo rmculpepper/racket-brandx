@@ -5,7 +5,7 @@
                      (only-in racket/class
                               class this abstract augment inner override ->m)
                      (only-in racket/generic
-                              redirect-generics)))
+                              define-generics redirect-generics)))
 @(begin
   (define the-eval (make-base-eval))
   (the-eval '(require racket/match racket/math racket/contract brandx)))
