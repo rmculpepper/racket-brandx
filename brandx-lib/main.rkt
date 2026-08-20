@@ -1385,16 +1385,22 @@
            (ancestor? anc obj-anc))))
   (lambda (f)
     (define fname (object-name f))
-    (define (wrapper obj . args)
-      (unless (ok-first-arg? obj)
-        (error fname "bad target for super method: ~e" obj))
-      (apply values obj args))
-    (define kw-wrapper
-      (make-keyword-procedure
-       (lambda (kws kwargs obj . args)
+    (define wrapper
+      (case-lambda
+        [() (error fname "missing target for super method")]
+        [(obj . args)
          (unless (ok-first-arg? obj)
            (error fname "bad target for super method: ~e" obj))
-         (apply values kwargs obj args))
+         (apply values obj args)]))
+    (define kw-wrapper
+      (make-keyword-procedure
+       (case-lambda
+         [(kws kwargs)
+          (error fname "missing target for super method")]
+         [(kws kwargs obj . args)
+          (unless (ok-first-arg? obj)
+            (error fname "bad target for super method: ~e" obj))
+          (apply values kwargs obj args)])
        wrapper))
     (cond [(procedure? f)
            (define-values (req-kws opt-kws) (procedure-keywords f))

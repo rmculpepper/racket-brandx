@@ -184,3 +184,22 @@
      #:bind (S1)
      (bundle))
    (void)))
+
+(check-exn
+ #rx"bad target for super method"
+ (lambda ()
+   (define-interface I (f))
+   (define xf #f)
+   (struct s ()
+     #:properties
+     (method-properties
+      #:export (I)
+      (define f void)))
+   (struct s2 s ()
+     #:properties
+     (method-properties
+      #:export (I)
+      #:import ([I #:super])
+      (set! xf super-f)
+      (define f void)))
+   (xf 'blah)))
