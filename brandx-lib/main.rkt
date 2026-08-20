@@ -541,31 +541,37 @@
                                               (current-contract-region) #f))))])]))
 
 (begin-for-syntax
-  ;; (generic-transformer Id (U Id #f) (U Id #f))
+  ;; generic-transformer : Id (U Id #f) (U Id #f) -> transformer
   ;; Automatically selects between name bound by module-boundary contract vs
   ;; name bound by with-contract vs unprotected name.
-  (struct generic-transformer (uname lname mname)
-    #:property prop:procedure
-    (lambda (self stx)
-      (case (syntax-local-context)
-        [(expression)
-         (define (can-use-mname?)
-           (define id (if (stx-pair? stx) (stx-car stx) stx))
-           (match (identifier-binding id)
-             [(list* def-mpi _ from-mpi _)
-              ;; Candidate criteria for when safe to use mname (if exists):
-              ;; 1. reference occurs in other module (def-mpi is not self-mpi)
-              ;; 2. reference originates in other modules (def-mpi != from-mpi)
-              ;; Second seems more consistent with module-boundary behavior.
-              (not (equal? def-mpi from-mpi))]
-             [_ #f]))
-         (match-define (generic-transformer uname lname mname) self)
-         (define replacement-id
-           (cond [(and mname (can-use-mname?)) mname]
-                 [lname lname]
-                 [else uname]))
-         ((make-variable-like-transformer replacement-id) stx)]
-        [else #`(#%expression #,stx)]))))
+  (define (generic-transformer uname lname mname)
+    (make-variable-like-transformer
+     (lambda (id)
+       (define (can-use-mname?)
+         (match (identifier-binding id)
+           [(list* def-mpi _ from-mpi _)
+            ;; Candidate criteria for when safe to use mname (if exists):
+            ;; 1. reference occurs in other module (current-mpi is not def-mpi)
+            ;; 2. reference originates in other modules (source-mpi is not def-mpi)
+            ;; Criterion (2) seems more consistent with module-boundary behavior, but
+            ;; difficult to get complete source-mpi (syntax-source-module drops submods),
+            ;; so do (1) instead.
+            ;;
+            ;; If current-mpi is same as def-mpi, then both will be self;
+            ;; so if def-mpi is not self, then safe; else look closer.
+            (cond [(let-values ([(rel base) (module-path-index-split def-mpi)])
+                     (and (not rel) (not base))) ;; def-mpi is "self"
+                   ;; Occurrence may be in different submod of enclosing "self" module;
+                   ;; fetch occurrence mpi and compare.
+                   (define occur-mpi
+                     (variable-reference->module-path-index
+                      (syntax-local-eval #'(#%variable-reference))))
+                   (not (equal? def-mpi occur-mpi))]
+                  [else #t])]
+           [_ #f]))
+       (cond [(and mname (can-use-mname?)) mname]
+             [lname lname]
+             [else uname])))))
 
 (define-syntax interface-out
   (make-provide-transformer
