@@ -298,14 +298,14 @@
           (cond [(hash-ref seen vname #f)
                  => (lambda (osig1)
                       (raise-syntax-error
-                       #f (format "duplicate name in ~a" what) #'name #f
+                       #f "duplicate member name" #'name #f
                        (list (ctsig-name osig1) (ctsig-name osig))))]
                 [else (hash-set! seen vname osig)])))
       (for ([vname (in-list (datum (vname ...)))])
         (cond [(hash-ref seen (syntax-e vname) #f)
                => (lambda (src1)
                     (raise-syntax-error
-                     #f (format "duplicate name in ~a" what) #'name vname))]
+                     #f "duplicate member name" #'name vname))]
               [else (hash-set! seen vname #t)])))
     (define vnames (syntax->datum #'(vname ...)))
     (values #'name uid #'rtname supers vnames #'extra))
@@ -358,7 +358,7 @@
        (for ([deps (in-list (datum ((d.dep ...) ...)))])
          (for ([dep (in-list deps)])
            (unless (memq (syntax-e dep) vnames)
-             (wrong-syntax dep "not a signature member")))
+             (wrong-syntax dep "not a member name")))
          (let ([dup (check-duplicate-identifier deps)])
            (when dup (wrong-syntax dup "duplicate identifier in dependency list")))))
      (define/with-syntax (rtname) (generate-temporaries #'(signame)))
@@ -682,12 +682,13 @@
                    [excepts (datum (~? (xc.xname ...) #f))]
                    [prefix (or (datum prefix) (format-id #'sig ""))])
                (when (and excepts (pair? excepts))
-                 (unless (ctif? (datum sig.value))
-                   (wrong-syntax (car (datum xc)) "not allowed with signature"))
                  (define all-vnames (ctsig-all-vnames (datum sig.value)))
                  (for ([except-id (in-list excepts)])
-                   (unless (memq (syntax-e except-id) all-vnames)
-                     (wrong-syntax except-id "name is not member of interface or signature"))))
+                   (cond [(ctif? (datum sig.value))
+                          (unless (memq (syntax-e except-id) all-vnames)
+                            (wrong-syntax except-id "name is not member of interface"))]
+                         [else
+                          (wrong-syntax except-id "not allowed with signature")])))
                (impexp this-syntax (datum sig.value) tag prefix
                        (if (ctif? (datum sig.value))
                            (and excepts (map syntax-e excepts))
