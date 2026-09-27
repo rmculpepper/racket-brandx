@@ -169,8 +169,8 @@
 (struct rtif rtsig
   (;; supers    ;; (Listof RtInterface)
    ctcv         ;; (Vectorof (U Contract #f)), used by module boundary
-   in-ctcv      ;; (Vectorof (Any Party Location -> Any)) -- used to check impls
-   out-ctcv     ;; (Vectorof (Any Party Location -> Any))
+   in-ctcv      ;; (Vectorof (Any Name Party Location -> Any)) -- used to check impls
+   out-ctcv     ;; (Vectorof (Any Name Party Location -> Any))
    fallbacks    ;; VarHash
    vprop        ;; (StructTypeProperty #:in (StructType -> VarHash) #:out VTable)
    vprop?       ;; (Any -> Boolean)
@@ -524,7 +524,7 @@
                 ...
                 (define-syntax gname
                   (generic-transformer
-                   #'uname
+                   (quote-syntax uname)
                    (quote-syntax lname)
                    quoted-mname-if-defined))
                 ...)]
@@ -585,7 +585,7 @@
 ;; ------------------------------------------------------------
 ;; Generic Functions
 
-;; make-generic* : RtInterface Symbol Boolean
+;; make-generic* : RtInterface Symbol Symbol Boolean
 ;;              -> (Instance Any ... -> Any) or #f
 (define (make-generic* ifc seek-name name ctc?)
   (let loop ([ifc ifc])
