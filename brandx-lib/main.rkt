@@ -600,14 +600,18 @@
             (unless (and (vprop? obj) (not (struct-type? obj)))
               (raise-argument-error name (format "~a?" iname) obj))
             (vector-ref (vprop-ref obj) index))
+          (define proc0
+            (case-lambda
+              [(obj) ((get-method obj) obj)]
+              [(obj arg1) ((get-method obj) obj arg1)]
+              [(obj arg1 arg2) ((get-method obj) obj arg1 arg2)]
+              [(obj arg1 arg2 arg3) ((get-method obj) obj arg1 arg2 arg3)]
+              [(obj . args) (apply (get-method obj) obj args)]))
           (define proc
             (make-keyword-procedure
              (lambda (kws kwargs obj . args)
                (keyword-apply (get-method obj) kws kwargs obj args))
-             (procedure-rename
-              (lambda (obj . args)
-                (apply (get-method obj) obj args))
-              name)))
+             (procedure-rename proc0 name)))
           (if ctc? (staged-out-ctc proc (format "~a (generic)" name) #f #f) proc))
         (ormap loop (rtsig-supers ifc)))))
 
