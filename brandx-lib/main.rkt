@@ -514,7 +514,7 @@
                       #:pos-source (quote (interface iname))))))
             #'(begin
                 (define uname
-                  (make-generic* rtname (quote vname) (quote gname) #f))
+                  (make-generic* rtname (quote vname) (quote gname)))
                 ...
                 (define-values (lname ...)
                   (apply values
@@ -533,7 +533,7 @@
             ;; ordinary variables
             #'(begin
                 (define uname
-                  (make-generic* rtname (quote vname) (quote gname) #f))
+                  (make-generic* rtname (quote vname) (quote gname)))
                 ...
                 (define-values (gname ...)
                   (apply values
@@ -585,35 +585,34 @@
 ;; ------------------------------------------------------------
 ;; Generic Functions
 
-;; make-generic* : RtInterface Symbol Symbol Boolean
-;;              -> (Instance Any ... -> Any) or #f
-(define (make-generic* ifc seek-name name ctc?)
-  (let loop ([ifc ifc])
-    (or (for/first ([vname (in-list (rtsig-vnames ifc))]
-                    [index (in-naturals VSTART)]
-                    [staged-out-ctc (in-vector (rtif-out-ctcv ifc))]
-                    #:when (eq? vname seek-name))
-          (define iname (rtsig-name ifc))
-          (define vprop? (rtif-vprop? ifc))
-          (define vprop-ref (rtif-vprop-ref ifc))
-          (define (get-method obj)
-            (unless (and (vprop? obj) (not (struct-type? obj)))
-              (raise-argument-error name (format "~a?" iname) obj))
-            (vector-ref (vprop-ref obj) index))
-          (define proc0
-            (case-lambda
-              [(obj) ((get-method obj) obj)]
-              [(obj arg1) ((get-method obj) obj arg1)]
-              [(obj arg1 arg2) ((get-method obj) obj arg1 arg2)]
-              [(obj arg1 arg2 arg3) ((get-method obj) obj arg1 arg2 arg3)]
-              [(obj . args) (apply (get-method obj) obj args)]))
-          (define proc
-            (make-keyword-procedure
-             (lambda (kws kwargs obj . args)
-               (keyword-apply (get-method obj) kws kwargs obj args))
-             (procedure-rename proc0 name)))
-          (if ctc? (staged-out-ctc proc (format "~a (generic)" name) #f #f) proc))
-        (ormap loop (rtsig-supers ifc)))))
+;; make-generic* : RtInterface Symbol Symbol
+;;              -> (Instance Any ... -> Any)
+;; PRE: name is defined immediately within ifc (not in super-interface)
+;; Does not apply contract.
+(define (make-generic* ifc seek-name name)
+  (for/first ([vname (in-list (rtsig-vnames ifc))]
+              [index (in-naturals VSTART)]
+              #:when (eq? vname seek-name))
+    (define iname (rtsig-name ifc))
+    (define vprop? (rtif-vprop? ifc))
+    (define vprop-ref (rtif-vprop-ref ifc))
+    (define (get-method obj)
+      (unless (and (vprop? obj) (not (struct-type? obj)))
+        (raise-argument-error name (format "~a?" iname) obj))
+      (vector-ref (vprop-ref obj) index))
+    (define proc0
+      (case-lambda
+        [(obj) ((get-method obj) obj)]
+        [(obj arg1) ((get-method obj) obj arg1)]
+        [(obj arg1 arg2) ((get-method obj) obj arg1 arg2)]
+        [(obj arg1 arg2 arg3) ((get-method obj) obj arg1 arg2 arg3)]
+        [(obj . args) (apply (get-method obj) obj args)]))
+    (define proc
+      (make-keyword-procedure
+       (lambda (kws kwargs obj . args)
+         (keyword-apply (get-method obj) kws kwargs obj args))
+       (procedure-rename proc0 name)))
+    proc))
 
 ;; ============================================================
 ;; Bundles
