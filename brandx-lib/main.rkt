@@ -592,6 +592,7 @@
 (define (make-generic* ifc seek-name name)
   (for/first ([vname (in-list (rtsig-vnames ifc))]
               [index (in-naturals VSTART)]
+              [ctc (in-vector (rtif-ctcv ifc))]
               #:when (eq? vname seek-name))
     (define iname (rtsig-name ifc))
     (define vprop? (rtif-vprop? ifc))
@@ -607,12 +608,21 @@
         [(obj arg1 arg2) ((get-method obj) obj arg1 arg2)]
         [(obj arg1 arg2 arg3) ((get-method obj) obj arg1 arg2 arg3)]
         [(obj . args) (apply (get-method obj) obj args)]))
-    (define proc
-      (make-keyword-procedure
-       (lambda (kws kwargs obj . args)
-         (keyword-apply (get-method obj) kws kwargs obj args))
-       (procedure-rename proc0 name)))
-    proc))
+    (define proc1 (procedure-rename proc0 name))
+    (cond [(arrow-contract/no-keywords? ctc)
+           proc1]
+          [else
+           (make-keyword-procedure
+            (lambda (kws kwargs obj . args)
+              (keyword-apply (get-method obj) kws kwargs obj args))
+            proc1)])))
+
+(define (arrow-contract/no-keywords? ctc)
+  #f
+  #;
+  (let ()
+    (local-require (only-in racket/contract/private/arrow-common base->? base->-kwd-infos))
+    (and (base->? ctc) (null? (base->-kwd-infos ctc)))))
 
 ;; ============================================================
 ;; Bundles
