@@ -5,7 +5,8 @@
 
 (define collection "brandx")
 (define deps
-  '("base" "brandx-lib"))
+  '("rackunit-lib"
+    "base" "brandx-lib"))
 (define implies
   '("brandx-lib"))
 (define build-deps
